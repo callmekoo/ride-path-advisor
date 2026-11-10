@@ -8,9 +8,10 @@ length. The kernel's A* heuristic depends on that. Forbidden arcs get +inf.
 The numbers are starting points, to be tuned on the eval page.
 """
 
-from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
+from pydantic import BaseModel, ConfigDict, Field
 
 from rpa.graph.store import GraphData
 from rpa.osm.tags import BACK_OK, CYCLE_INFRA, FORD, FWD_OK, SOFT_RESTRICTED, Highway, Surface
@@ -50,16 +51,13 @@ _PENALTY_BY_CLASS = np.array([_ROAD_CLASS_PENALTY[h] for h in Highway])
 assert all(len(factors) == len(Surface) for factors in _SURFACE_FACTOR.values())
 
 
-@dataclass(frozen=True)
-class Prefs:
-    avoid_major: float = 0.5  # 0 = big roads are fine, 1 = avoid them hard
-    surface: str = "any"  # "any" | "paved" | "prefer_unpaved"
+class Prefs(BaseModel):
+    """Riding preferences that shape the arc weights."""
 
-    def __post_init__(self) -> None:
-        if not 0.0 <= self.avoid_major <= 1.0:
-            raise ValueError(f"avoid_major must be within 0..1, got {self.avoid_major}")
-        if self.surface not in _SURFACE_FACTOR:
-            raise ValueError(f"surface must be one of {sorted(_SURFACE_FACTOR)}, got {self.surface!r}")
+    model_config = ConfigDict(frozen=True)
+
+    avoid_major: float = Field(default=0.5, ge=0.0, le=1.0)  # 0 = big roads are fine, 1 = avoid them hard
+    surface: Literal["any", "paved", "prefer_unpaved"] = "any"
 
 
 def arc_weights(g: GraphData, prefs: Prefs) -> np.ndarray:

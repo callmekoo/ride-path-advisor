@@ -12,6 +12,7 @@ dependencies = [
     "rpa-kernel",
     "shapely>=2.2",
     "httpx[socks]>=0.28",
+    "pydantic>=2.12",
 ]
 
 [project.scripts]
