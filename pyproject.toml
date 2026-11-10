@@ -10,6 +10,8 @@ dependencies = [
     "osmium>=4.3",
     "typer>=0.29",
     "rpa-kernel",
+    "shapely>=2.2",
+    "httpx[socks]>=0.28",
 ]
 
 [project.scripts]

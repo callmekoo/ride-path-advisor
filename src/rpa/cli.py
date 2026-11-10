@@ -1,4 +1,4 @@
-"""Command line interface: `rpa build-graph`, `rpa route`."""
+"""Command line interface: `rpa fetch-region`, `rpa build-graph`, `rpa route`."""
 
 import hashlib
 import os
@@ -14,6 +14,7 @@ from rpa import config
 from rpa.graph.snap import Snapper
 from rpa.graph.store import FORMAT_VERSION, GraphData, load_graph, save_graph
 from rpa.osm.build import build_graph
+from rpa.osm.fetch import fetch_region
 from rpa.osm.tags import Highway, Surface
 from rpa.routing.cost import Prefs, arc_weights
 from rpa.routing.path import build_path
@@ -49,6 +50,19 @@ def _describe_graph(g: GraphData) -> str:
             f"Покрытие: {_share_by_class(np.asarray(g.edge_surface), length, Surface)}",
         ]
     )
+
+
+@app.command("fetch-region")
+def fetch_region_command(
+    buffer_km: Annotated[float, typer.Option(min=0.0, help="Буфер вокруг границы региона, км")] = (
+        config.REGION_BUFFER_KM
+    ),
+) -> None:
+    """Скачать выгрузки OSM и вырезать регион с буфером."""
+    path = fetch_region(
+        config.REGION_EXTRACT_URLS, config.REGION_BOUNDARY_POLY_URL, buffer_km, config.osm_dir(), log=typer.echo
+    )
+    typer.echo(f"Готово: {path}")
 
 
 @app.command("build-graph")
