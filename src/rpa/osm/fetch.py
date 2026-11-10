@@ -137,9 +137,14 @@ def fetch_region(
     write_geojson(buffer_km(parse_poly(boundary.text), buffer), out_dir / "region.geojson")
     log("Склеиваю выгрузки")
     run_osmium(["merge", *names, "-o", "merged.osm.pbf", "--overwrite"], out_dir)
+    # Neighbouring extracts are snapshots taken minutes apart, so an object on
+    # a border can arrive in two versions. `merge` keeps both and `extract`
+    # refuses such input; `time-filter` keeps the latest version of each.
+    run_osmium(["time-filter", "merged.osm.pbf", "-o", "latest.osm.pbf", "--overwrite"], out_dir)
     log(f"Вырезаю область с буфером {buffer:g} км")
     run_osmium(
-        ["extract", "-p", "region.geojson", "merged.osm.pbf", "-o", "region.osm.pbf", "--overwrite"], out_dir
+        ["extract", "-p", "region.geojson", "latest.osm.pbf", "-o", "region.osm.pbf", "--overwrite"], out_dir
     )
     (out_dir / "merged.osm.pbf").unlink()
+    (out_dir / "latest.osm.pbf").unlink()
     return out_dir / "region.osm.pbf"
