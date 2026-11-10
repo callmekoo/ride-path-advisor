@@ -1,0 +1,17 @@
+[package]
+name = "rpa-kernel"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "rpa_kernel"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.30", features = ["abi3-py312"] }
+numpy = "0.30"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

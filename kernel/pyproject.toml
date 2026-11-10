@@ -1,0 +1,19 @@
+[project]
+name = "rpa-kernel"
+version = "0.1.0"
+description = "Path search kernel for rpa (Rust, PyO3)"
+requires-python = ">=3.12"
+dependencies = ["numpy>=2"]
+
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "rpa_kernel"
+# Always optimised: a debug-mode search is far too slow to judge anything by.
+profile = "release"
+
+[tool.uv]
+# Rebuild the extension when Rust sources change.
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "src/**/*.rs" }]
