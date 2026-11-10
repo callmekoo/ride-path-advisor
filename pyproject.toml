@@ -30,3 +30,4 @@ dev = ["pytest>=9", "hypothesis>=6.170"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]

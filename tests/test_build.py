@@ -14,28 +14,12 @@ tests/fixtures/micro.opl, roughly (ids are OSM node ids, * marks graph nodes):
     9 - 10                   w15: an island, dropped as a separate component
 """
 
-from pathlib import Path
-
 import numpy as np
 import pytest
+from helpers import edge_index
 
-from rpa.graph.store import GraphData
 from rpa.osm.build import RawWays, assemble, build_graph, read_ways
 from rpa.osm.tags import BACK_OK, FWD_OK, SOFT_RESTRICTED, Highway, Surface
-
-MICRO = Path(__file__).parent / "fixtures" / "micro.opl"
-
-
-@pytest.fixture(scope="module")
-def micro() -> GraphData:
-    return build_graph(MICRO)
-
-
-def edge_index(g: GraphData, osm_u: int, osm_v: int) -> int:
-    ids = g.node_osm_id
-    matches = np.flatnonzero((ids[g.edge_u] == osm_u) & (ids[g.edge_v] == osm_v))
-    assert len(matches) == 1, f"expected exactly one edge {osm_u}->{osm_v}, found {len(matches)}"
-    return int(matches[0])
 
 
 def test_graph_is_consistent(micro):
