@@ -1,0 +1,101 @@
+import json
+
+import pytest
+from helpers import MICRO
+from typer.testing import CliRunner
+
+from rpa.cli import app
+from rpa.graph.store import FORMAT_VERSION, load_graph
+from rpa.routing.path import RoutePath
+from rpa.viz.map import render_map
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def data_dir(tmp_path, monkeypatch):
+    """An isolated data directory holding a graph built from the micro map."""
+    monkeypatch.setenv("RPA_DATA_DIR", str(tmp_path / "data"))
+    result = runner.invoke(app, ["build-graph", str(MICRO)])
+    assert result.exit_code == 0, result.output
+    return tmp_path / "data"
+
+
+def test_build_graph_writes_a_versioned_directory_and_points_current_at_it(data_dir):
+    graph_root = data_dir / "graph"
+    built = [p for p in graph_root.iterdir() if p.name != "current"]
+    assert len(built) == 1
+    assert built[0].name.endswith(f"-v{FORMAT_VERSION}")
+    assert (graph_root / "current").resolve() == built[0].resolve()
+
+    graph, meta = load_graph(graph_root / "current")
+    assert graph.n_edges == 7
+    assert meta["source_file"] == "micro.opl"
+    assert len(meta["source_sha256"]) == 64
+
+
+def test_build_graph_reports_what_it_built(tmp_path):
+    result = runner.invoke(app, ["build-graph", str(MICRO), "--out", str(tmp_path / "g")])
+    assert result.exit_code == 0, result.output
+    assert "7" in result.output
+    assert "residential" in result.output
+    assert json.loads((tmp_path / "g" / "meta.json").read_text())["n_nodes"] == 7
+
+
+def test_rebuilding_the_same_file_is_fine(data_dir):
+    result = runner.invoke(app, ["build-graph", str(MICRO)])
+    assert result.exit_code == 0, result.output
+
+
+def test_route_prints_a_summary_and_writes_a_map(data_dir, tmp_path):
+    html = tmp_path / "out" / "route.html"
+    result = runner.invoke(app, ["route", "--from", "56.800,60.000", "--to", "56.803,60.004", "--html", str(html)])
+    assert result.exit_code == 0, result.output
+    assert "км" in result.output
+    assert "residential" in result.output
+    page = html.read_text()
+    assert "FeatureCollection" in page
+    assert "maplibre" in page
+    assert "OpenStreetMap" in page
+
+
+def test_route_warns_when_a_point_is_far_from_any_road(data_dir):
+    result = runner.invoke(app, ["route", "--from", "56.900,60.000", "--to", "56.803,60.004"])
+    assert result.exit_code == 0, result.output
+    assert "далеко" in result.output
+
+
+def test_route_fails_clearly_when_there_is_no_way_through(data_dir):
+    # Node 7 can only be left against a one-way street.
+    result = runner.invoke(app, ["route", "--from", "56.800,60.004", "--to", "56.800,60.000"])
+    assert result.exit_code == 1
+    assert "не найден" in result.output
+
+
+def test_route_rejects_malformed_coordinates(data_dir):
+    result = runner.invoke(app, ["route", "--from", "somewhere", "--to", "56.803,60.004"])
+    assert result.exit_code == 2
+
+
+def test_route_without_a_graph_explains_what_to_do(tmp_path, monkeypatch):
+    monkeypatch.setenv("RPA_DATA_DIR", str(tmp_path / "nothing"))
+    result = runner.invoke(app, ["route", "--from", "56.800,60.000", "--to", "56.803,60.004"])
+    assert result.exit_code == 1
+    assert "build-graph" in result.output
+
+
+def test_render_map_embeds_routes_safely(tmp_path):
+    import numpy as np
+
+    route = RoutePath(
+        arcs=np.array([0], dtype=np.uint32),
+        coords=np.array([[60.0, 56.8], [60.001, 56.8]]),
+        length_m=60.9,
+        km_by_highway={"residential": 0.0609},
+        km_by_surface={"unknown": 0.0609},
+    )
+    out = tmp_path / "map.html"
+    render_map([route], ["</script><b>x</b>"], out)
+    page = out.read_text()
+    assert "[60.0, 56.8]" in page
+    assert "</script><b>" not in page
