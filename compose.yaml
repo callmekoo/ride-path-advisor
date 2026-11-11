@@ -1,0 +1,21 @@
+# For Docker: `docker compose up -d --build`, then http://127.0.0.1:8000/
+# Batch commands run in the same image: `docker compose run --rm rpa update`.
+#
+# With podman use the `podman run --userns=keep-id …` commands from the README instead:
+# rootless podman maps users differently, and `user:` below would leave ./data unwritable.
+
+services:
+  rpa:
+    build: .
+    image: rpa
+    # Whoever owns ./data on the host: files written there must stay theirs. Set RPA_UID and
+    # RPA_GID in .env (`id -u`, `id -g`) if they are not 1000.
+    user: "${RPA_UID:-1000}:${RPA_GID:-1000}"
+    # No logins in the service: reachable from this machine only. Put a VPN or an authenticating
+    # reverse proxy in front before changing the address.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/data:Z  # :Z labels the directory for SELinux; harmless elsewhere
+    env_file: .env  # the language model's address, name and key; see .env.example
+    restart: unless-stopped

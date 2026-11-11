@@ -1,4 +1,5 @@
 # Nothing personal and nothing built on the host goes into the image.
+# Docker reads only this name; podman reads it too when there is no .containerignore.
 .git
 .env
 .env.*

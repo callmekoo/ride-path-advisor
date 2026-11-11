@@ -1,8 +1,12 @@
 # One image for the server and for the batch commands (rpa update, rpa sync-tracks, …).
+# Named Dockerfile so that both docker and podman find it without being told.
 #
 #   podman build -t rpa .
 #   podman run -d --name rpa --userns=keep-id -v ./data:/data:Z -p 127.0.0.1:8000:8000 --env-file .env rpa
 #   podman run --rm --userns=keep-id -v ./data:/data:Z rpa update
+#
+#   docker compose up -d --build        (see compose.yaml)
+#   docker compose run --rm rpa update
 
 # --- Python environment with the Rust kernel compiled into it
 FROM python:3.14-slim AS build
@@ -40,7 +44,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/.venv /app/.venv
 COPY --from=web /web/dist /app/web
-# HOME: with --userns=keep-id the process runs as a user that has no home in the image.
+# HOME: the process runs as the owner of the data directory, a user that has no home in the image.
 ENV PATH=/app/.venv/bin:$PATH \
     HOME=/tmp \
     PYTHONUNBUFFERED=1 \
