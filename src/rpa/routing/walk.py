@@ -11,18 +11,22 @@ from rpa.routing.engine import Engine
 USED_EDGE_FACTOR = 20.0
 
 
-def route_through(engine: Engine, w: np.ndarray, nodes: list[int]) -> np.ndarray | None:
+def route_through(
+    engine: Engine, w: np.ndarray, nodes: list[int], may_turn_back_at: frozenset[int] = frozenset()
+) -> np.ndarray | None:
     """Arcs of a walk visiting `nodes` in order, or None if some leg has no route.
 
     Works on a private copy of `w`. After each leg its edges become expensive
     in both directions, and turning straight back at the end of a leg is
     forbidden, so the walk tends to form a loop instead of an out-and-back.
+    At the nodes in `may_turn_back_at` turning back is allowed: a place at the
+    end of a road can only be visited that way.
     """
     w = w.copy()
     legs = []
     last_arc: int | None = None
     for a, b in pairwise(nodes):
-        if last_arc is not None:
+        if last_arc is not None and a not in may_turn_back_at:
             w[last_arc ^ 1] = np.inf
         found = engine.kernel.route(a, b, w)
         if found is None:

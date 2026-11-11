@@ -139,7 +139,7 @@ def _through_place(
     engine: Engine, w: np.ndarray, start: int, place: int, end: int, spec: RouteSpec
 ) -> tuple[list[Walk], str | None]:
     """Walks start -> place -> end (a loop when end is the start), plus a note if the length cannot be honoured."""
-    direct = route_through(engine, w, [start, place, end])
+    direct = _walk_via_place(engine, w, [start, place, end], place)
     if direct is None:
         return [], None
     direct_m = _metres(engine, direct)
@@ -153,6 +153,25 @@ def _through_place(
     if length is None:
         length = LengthKm.around(PLACE_DETOUR * direct_m / 1000, 0.15)
     return walks + _detours(engine, w, place, end, length, None, before=start), None
+
+
+def _walk_via_place(engine: Engine, w: np.ndarray, nodes: list[int], place: int) -> np.ndarray | None:
+    """A walk through `nodes`, one of which is the named place `place`, with stray spurs trimmed.
+
+    A place on a dead-end road is ridden to and back from: turning back is
+    allowed there when the walk is impossible otherwise, and that spur is kept.
+    """
+    arcs = route_through(engine, w, nodes)
+    if arcs is None:
+        arcs = route_through(engine, w, nodes, may_turn_back_at=frozenset({place}))
+    if arcs is None:
+        return None
+    reached = np.flatnonzero(engine.arc_head[arcs] == place)
+    if len(reached) == 0:
+        return trim_spurs(arcs)
+    # Trim each side of the place on its own, so that the spur leading to it survives.
+    cut = int(reached[0]) + 1
+    return np.concatenate([trim_spurs(arcs[:cut]), trim_spurs(arcs[cut:])])
 
 
 def _nicest(engine: Engine, nice: np.ndarray, nodes: np.ndarray, lon: float, lat: float) -> int:
@@ -355,10 +374,13 @@ def _detours(
                 if len(band) == 0:
                     return None
                 via = _nicest(engine, nice, band, mid_lon, mid_lat)
-            arcs = route_through(engine, w, [start, via, end] if before is None else [before, start, via, end])
+            if before is None:
+                arcs = route_through(engine, w, [start, via, end])
+                arcs = trim_spurs(arcs) if arcs is not None else None
+            else:
+                arcs = _walk_via_place(engine, w, [before, start, via, end], start)
             if arcs is None:
                 return None
-            arcs = trim_spurs(arcs)
             metres = _metres(engine, arcs)
             if length.min * 1000 <= metres <= length.max * 1000:
                 return arcs, (via if before is None else start)

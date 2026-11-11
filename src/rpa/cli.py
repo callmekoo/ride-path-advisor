@@ -391,3 +391,28 @@ def gazetteer_command(
         hits = gazetteer.search(query)
         found = "; ".join(f"{describe(hit.place)}{'' if hit.exact else ' ~'}" for hit in hits) or "ничего"
         typer.echo(f"  {query}: {found}")
+
+
+@app.command("nlu-eval")
+def nlu_eval_command(
+    only: Annotated[list[str] | None, typer.Option(help="Только формулировки, содержащие этот текст")] = None,
+) -> None:
+    """Проверить настроенную модель на эталонных формулировках (ходит в сеть, тратит токены)."""
+    from rpa.nlu.cases import CASES
+    from rpa.nlu.client import LlmClient, LlmSettings
+    from rpa.nlu.evaluate import PASS_SHARE, run_cases
+
+    settings = LlmSettings.from_env()
+    if settings is None:
+        typer.echo("Модель не настроена: задайте LLM_BASE_URL, LLM_MODEL и LLM_API_KEY (см. .env.example).", err=True)
+        raise typer.Exit(1)
+    cases = [case for case in CASES if not only or any(part in case.text for part in only)]
+    outcomes = run_cases(LlmClient(settings), cases)
+    for outcome in outcomes:
+        typer.echo(f"{'ok ' if not outcome.problems else 'НЕТ'} {outcome.case.text}")
+        for problem in outcome.problems:
+            typer.echo(f"      {problem}")
+    passed = sum(not outcome.problems for outcome in outcomes)
+    typer.echo(f"Понято верно: {passed} из {len(outcomes)} (модель {settings.model})")
+    if not outcomes or passed / len(outcomes) < PASS_SHARE:
+        raise typer.Exit(1)

@@ -350,3 +350,8 @@ class Gazetteer:
         place = Place(name, kind, lon, lat, radius, tuple(filter(None, alt_names.split(";"))))
         return Hit(place, exact, not hinted or kind in hinted, distance)
 
+
+
+def same_name(a: str, b: str) -> bool:
+    """Whether two spellings name the same thing: kind words, word order, case and endings aside."""
+    return _name(a).key == _name(b).key

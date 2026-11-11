@@ -254,3 +254,52 @@ def test_a_route_passes_a_named_place_or_a_kind_of_place_but_not_both(grid):
             via=point(grid, 12, 12),
             via_category="water",
         )
+
+
+def with_peninsula(grid):
+    """The grid plus a dead-end road from node (14, 12): a fork A with two stubs B and C beyond it."""
+    from dataclasses import replace
+
+    base = np.asarray(grid.node_lonlat)
+    corner = base[node(14, 12)]
+    a, b, c = corner + [0.002, 0.001], corner + [0.004, 0.001], corner + [0.002, 0.003]
+    first = grid.n_nodes
+    ends = [(node(14, 12), first), (first, first + 1), (first, first + 2)]
+    lonlat = np.vstack([base, a, b, c])
+    extra = len(ends)
+
+    def more(values: np.ndarray, added) -> np.ndarray:
+        return np.concatenate([np.asarray(values), np.asarray(added, dtype=np.asarray(values).dtype)])
+
+    geometry = np.round(np.concatenate([lonlat[[u, v]] for u, v in ends]) * 1e7)
+    graph = replace(
+        grid,
+        node_lonlat=lonlat,
+        node_osm_id=more(grid.node_osm_id, [9001, 9002, 9003]),
+        edge_u=more(grid.edge_u, [u for u, _ in ends]),
+        edge_v=more(grid.edge_v, [v for _, v in ends]),
+        edge_len_m=more(grid.edge_len_m, [160.0, 125.0, 225.0]),
+        edge_way_id=more(grid.edge_way_id, [9001, 9002, 9003]),
+        edge_way_pos=np.vstack([grid.edge_way_pos, np.tile(grid.edge_way_pos[:1], (extra, 1))]),
+        edge_highway=more(grid.edge_highway, [grid.edge_highway[0]] * extra),
+        edge_surface=more(grid.edge_surface, [grid.edge_surface[0]] * extra),
+        edge_flags=more(grid.edge_flags, [grid.edge_flags[0]] * extra),
+        geom_off=more(grid.geom_off, [int(grid.geom_off[-1]) + 2 * (i + 1) for i in range(extra)]),
+        geom_xy=np.vstack([grid.geom_xy, geometry.astype(grid.geom_xy.dtype)]),
+    )
+    graph.validate()
+    return graph, first
+
+
+def test_a_place_on_a_dead_end_road_is_ridden_to_and_back_from(grid):
+    graph, fork = with_peninsula(grid)
+    engine = Engine(graph)
+    lon, lat = graph.node_lonlat[fork].tolist()
+    spec = loop_spec(grid, 10, 10, 16).model_copy(update={"via": Point(lon=lon, lat=lat, label="Мыс")})
+    candidates = generate(engine, spec)
+
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert fork in nodes_on(engine, candidate) and candidate.via_label == "Мыс"
+        assert 14.4 <= candidate.path.length_m / 1000 <= 17.6
+        assert candidate.features.repeat_share < 0.05  # only the 160 m to the fork and back

@@ -128,3 +128,11 @@ def test_gazetteer_indexes_named_places_of_the_map(data_dir):
     assert "Мест:" in result.output and "озеро Тихое: Тихое (озеро)" in result.output
     assert "Нигденет: ничего" in result.output
     assert (data_dir / "graph" / "current" / "gazetteer.sqlite").exists()
+
+
+def test_nlu_eval_without_a_model_explains_what_to_set(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # no .env here
+    for name in ("LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    result = runner.invoke(app, ["nlu-eval"])
+    assert result.exit_code == 1 and "LLM_API_KEY" in result.output
