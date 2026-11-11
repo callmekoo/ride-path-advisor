@@ -2,7 +2,7 @@ import { Map as MapLibre, Marker, NavigationControl, ScaleControl, setWorkerUrl 
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { ExpressionSpecification, FilterSpecification, GeoJSONSource, MapMouseEvent } from "maplibre-gl";
 import type { FeatureCollection } from "geojson";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { Heatmap, LonLat, Point } from "../api";
 import { HEAT_COLOURS, routeColour } from "../palette";
@@ -29,6 +29,8 @@ export interface MapViewProps {
   hover: LonLat | null;
   /** Ridden roads; shown, with a legend, whenever not null. */
   heatmap: Heatmap | null;
+  /** Controls laid over the map. */
+  children?: ReactNode;
 }
 
 // MapLibre looks for its worker next to its own module, where the bundler leaves nothing: point it at the copy
@@ -47,7 +49,7 @@ const filters = (selected: number) => ({
 });
 
 export function MapView(props: MapViewProps) {
-  const { frame, start, finish, routes, selected, options, hover, heatmap } = props;
+  const { frame, start, finish, routes, selected, options, hover, heatmap, children } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibre | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -245,6 +247,7 @@ export function MapView(props: MapViewProps) {
   return (
     <div className="map">
       <div className="map-canvas" ref={container} />
+      {children}
       {heatmap && (
         <div className="map-legend">
           <div className="map-legend-title">Заездов по дороге</div>

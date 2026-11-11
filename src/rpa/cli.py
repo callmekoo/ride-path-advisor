@@ -3,6 +3,7 @@
 import hashlib
 from collections import Counter
 import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -279,6 +280,16 @@ def match_command(
     _write_rides(directory.resolve(), graph)
 
 
+@app.command("sync-tracks")
+def sync_tracks_command(
+    jobs: Annotated[int, typer.Option(min=1, help="Параллельных процессов")] = min(12, os.cpu_count() or 1),
+    graph_dir: Annotated[Path | None, typer.Option("--graph", help="Каталог графа")] = None,
+) -> None:
+    """Учесть новые файлы из data/inbox: импортировать заезды и привязать их к дорогам."""
+    import_tracks_command(graph_dir)
+    match_command(jobs, graph_dir, None)
+
+
 @app.command("pop-map")
 def pop_map_command(
     out: Annotated[Path, typer.Option(help="Куда записать HTML-карту")] = Path("out/heatmap.html"),
@@ -346,9 +357,10 @@ def serve_command(
     import uvicorn
 
     from rpa.api.app import create_app
+    from rpa.api.jobs import TrackImport
     from rpa.nlu.client import LlmClient, LlmSettings
     from rpa.osm.gazetteer import GAZETTEER_FILE, Gazetteer
-    from rpa.routing.engine import load_engine
+    from rpa.routing.engine import RIDES_FILE, load_engine
 
     directory = graph_dir or config.current_graph_dir()
     if not (directory / "meta.json").exists():
@@ -365,13 +377,15 @@ def serve_command(
         else "Разбор текста: не настроен (LLM_BASE_URL, LLM_MODEL, LLM_API_KEY в окружении или .env)"
     )
     llm = LlmClient(settings) if settings else None
+    tracks = TrackImport(config.inbox_dir(), config.jobs_dir() / "tracks.log", [sys.executable, "-m", "rpa", "sync-tracks"])
     page = config.web_dist()
     typer.echo(
         f"Интерфейс: http://{host}:{port}/"
         if (page / "index.html").is_file()
         else f"Интерфейс: не собран ({page}); выполните npm install && npm run build в каталоге web"
     )
-    uvicorn.run(create_app(engine, config.db_file(), gazetteer, llm, page), host=host, port=port)
+    application = create_app(engine, config.db_file(), gazetteer, llm, page, directory / RIDES_FILE, tracks)
+    uvicorn.run(application, host=host, port=port)
 
 
 @app.command("gazetteer")
@@ -397,6 +411,32 @@ def gazetteer_command(
         hits = gazetteer.search(query)
         found = "; ".join(f"{describe(hit.place)}{'' if hit.exact else ' ~'}" for hit in hits) or "ничего"
         typer.echo(f"  {query}: {found}")
+
+
+@app.command("update")
+def update_command(
+    pbf: Annotated[Path | None, typer.Option(help="Файл OSM; по умолчанию выгрузка региона")] = None,
+    skip_fetch: Annotated[bool, typer.Option("--skip-fetch", help="Не скачивать OSM заново")] = False,
+    rasters: Annotated[bool, typer.Option(help="Скачивать лес и высоты (нужна сеть)")] = True,
+) -> None:
+    """Обновить карту: скачать свежий OSM, пересобрать граф, указатель названий, воду, лес и высоты.
+
+    Заезды переносятся на новый граф сами. Работающий сервер после этого нужно перезапустить.
+    """
+    source = pbf or config.region_pbf()
+    if pbf is None and not skip_fetch:
+        typer.echo("1/4. Скачиваю OSM")
+        fetch_region_command(config.REGION_BUFFER_KM)
+    if not source.is_file():
+        typer.echo(f"Нет файла OSM {source}: запустите без --skip-fetch или укажите --pbf.", err=True)
+        raise typer.Exit(1)
+    typer.echo("2/4. Собираю граф")
+    build_graph_command(source, None)
+    typer.echo("3/4. Собираю указатель названий")
+    gazetteer_command(source, None, None)
+    typer.echo("4/4. Вода, лес, высоты")
+    enrich_command(None, source, rasters)
+    typer.echo("Готово. Перезапустите сервер, чтобы он взял новый граф.")
 
 
 @app.command("nlu-eval")

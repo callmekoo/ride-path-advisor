@@ -13,6 +13,7 @@ import {
   type RouteResponse,
   type SavedRoute,
   type SavedRouteFull,
+  type TracksStatus,
   api,
 } from "./api";
 import { chips, without } from "./chips";
@@ -24,18 +25,21 @@ import { MapView } from "./components/MapView";
 import { PlacesPanel } from "./components/PlacesPanel";
 import { RequestEditor } from "./components/RequestEditor";
 import { SavedRoutesPanel } from "./components/SavedRoutesPanel";
+import { TracksPanel } from "./components/TracksPanel";
 import { along, bounds, pointAt } from "./geo";
 import { routeColour } from "./palette";
 import { type Pending, type Turn, answerWithOption, answerWithPoint, answerWithText, edited, utterance } from "./session";
 
-type Tab = "route" | "places" | "saved";
+type Tab = "route" | "places" | "saved" | "tracks";
 type Frame = [LonLat, LonLat];
 
 const TABS: [Tab, string][] = [
   ["route", "Маршрут"],
   ["places", "Места"],
   ["saved", "Сохранённые"],
+  ["tracks", "Треки"],
 ];
+const TRACKS_POLL_MS = 2000;
 const NO_OPTIONS: Point[] = []; // one array for "none", so the map does not redraw markers on every render
 const AROUND_HOME_DEG = 0.25; // how much of the map to show around the default place at first
 
@@ -76,6 +80,12 @@ export function App() {
   const [frame, setFrame] = useState<Frame | null>(null);
   const [heatmap, setHeatmap] = useState<Heatmap | null>(null);
   const [heatmapOn, setHeatmapOn] = useState(false);
+  const [tracksStatus, setTracksStatus] = useState<TracksStatus | null>(null);
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [tracksError, setTracksError] = useState<string | null>(null);
+  const tracksState = useRef<TracksStatus["state"] | null>(null); // the state last seen, to notice a run ending
+  const heatmapOnNow = useRef(heatmapOn);
+  heatmapOnNow.current = heatmapOn;
   const entryId = useRef(0);
 
   const say = useCallback((role: Entry["role"], text: string, notes: string[] = []) => {
@@ -105,6 +115,28 @@ export function App() {
       })
       .catch((error) => say("error", explain(error)));
   }, [say]);
+
+  const showTracks = useCallback((status: TracksStatus) => {
+    const finished = tracksState.current === "running" && status.state === "done";
+    tracksState.current = status.state;
+    setTracksStatus(status);
+    if (!finished) return;
+    // New rides change the numbers and the heatmap: take both again.
+    api.meta().then(setMeta, () => undefined);
+    setHeatmap(null);
+    if (heatmapOnNow.current) api.heatmap().then(setHeatmap, () => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (tab === "tracks") api.tracks().then(showTracks, (error) => setTracksError(explain(error)));
+  }, [tab, showTracks]);
+
+  const polling = tracksStatus?.state === "running";
+  useEffect(() => {
+    if (!polling) return;
+    const timer = setInterval(() => void api.tracks().then(showTracks, () => undefined), TRACKS_POLL_MS);
+    return () => clearInterval(timer);
+  }, [polling, showTracks]);
 
   const ask = useCallback(
     async (body: ParseBody) => {
@@ -236,6 +268,31 @@ export function App() {
     }
   };
 
+  const onUpload = async (files: File[]) => {
+    setTracksError(null);
+    try {
+      for (const [index, file] of files.entries()) {
+        setUploading(`${index + 1} из ${files.length}: ${file.name}`);
+        await api.uploadTrack(file);
+      }
+      showTracks(await api.importTracks());
+    } catch (error) {
+      setTracksError(explain(error));
+      await api.tracks().then(showTracks, () => undefined);
+    } finally {
+      setUploading(null);
+    }
+  };
+
+  const onImport = async () => {
+    setTracksError(null);
+    try {
+      showTracks(await api.importTracks());
+    } catch (error) {
+      setTracksError(explain(error));
+    }
+  };
+
   const showingSaved = tab === "saved";
   const shown: Shown[] = useMemo(() => {
     if (showingSaved) {
@@ -288,18 +345,12 @@ export function App() {
       <aside className="panel">
         <header className="panel-header">
           <nav className="tabs">
-            {TABS.map(([name, title]) => (
+            {TABS.filter(([name]) => name !== "tracks" || meta?.can_import_tracks).map(([name, title]) => (
               <button key={name} className={name === tab ? "tab tab-active" : "tab"} onClick={() => setTab(name)}>
                 {title}
               </button>
             ))}
           </nav>
-          {meta?.has_rides && (
-            <label className="heat-toggle" title={`Проехано ${Math.round(meta.ridden_km)} км дорог`}>
-              <input type="checkbox" checked={heatmapOn} onChange={(event) => void onHeatmap(event.target.checked)} />
-              Мои заезды
-            </label>
-          )}
         </header>
 
         {tab === "route" && (
@@ -350,6 +401,17 @@ export function App() {
             {profile}
           </SavedRoutesPanel>
         )}
+
+        {tab === "tracks" && (
+          <TracksPanel
+            status={tracksStatus}
+            riddenKm={meta?.has_rides ? meta.ridden_km : null}
+            uploading={uploading}
+            error={tracksError}
+            onUpload={(files) => void onUpload(files)}
+            onImport={() => void onImport()}
+          />
+        )}
       </aside>
 
       <MapView
@@ -364,7 +426,14 @@ export function App() {
         onOption={onOption}
         hover={hover}
         heatmap={heatmapOn ? heatmap : null}
-      />
+      >
+        {meta?.has_rides && (
+          <label className="map-toggle" title={`Проехано ${Math.round(meta.ridden_km)} км дорог`}>
+            <input type="checkbox" checked={heatmapOn} onChange={(event) => void onHeatmap(event.target.checked)} />
+            Мои заезды
+          </label>
+        )}
+      </MapView>
     </div>
   );
 }

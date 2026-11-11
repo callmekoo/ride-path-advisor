@@ -134,6 +134,15 @@ export interface Meta {
   ridden_km: number;
   has_gazetteer: boolean;
   has_llm: boolean;
+  can_import_tracks: boolean;
+}
+
+export interface TracksStatus {
+  state: "idle" | "running" | "done" | "failed";
+  started: string | null; // UTC, "YYYY-MM-DD HH:MM:SS"
+  finished: string | null;
+  log: string[]; // last lines of the processing log, oldest first
+  inbox: { name: string; size: number }[]; // uploaded files waiting for processing
 }
 
 /** Ridden roads: one MultiLineString per level, from rarely (0) to often (4) ridden. */
@@ -172,6 +181,18 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return answer.status === 204 ? (undefined as T) : ((await answer.json()) as T);
 }
 
+/** Sends a file as the raw request body; errors are explained like those of `call`. */
+async function upload(path: string, file: File): Promise<{ name: string; size: number }> {
+  let answer: Response;
+  try {
+    answer = await fetch(path, { method: "PUT", body: file });
+  } catch {
+    throw new ApiError(0, "Сервер не отвечает. Проверьте, что он запущен.");
+  }
+  if (!answer.ok) throw new ApiError(answer.status, await explanation(answer));
+  return (await answer.json()) as { name: string; size: number };
+}
+
 async function explanation(answer: Response): Promise<string> {
   try {
     const { detail } = (await answer.json()) as { detail?: unknown };
@@ -200,6 +221,10 @@ export const api = {
   saveRoute: (candidateId: number, name?: string) =>
     call<SavedRoute>("POST", "/api/routes", { candidate_id: candidateId, name }),
   deleteSavedRoute: (id: number) => call<void>("DELETE", `/api/routes/${id}`),
+
+  tracks: () => call<TracksStatus>("GET", "/api/tracks"),
+  uploadTrack: (file: File) => upload(`/api/tracks/files/${encodeURIComponent(file.name)}`, file),
+  importTracks: () => call<TracksStatus>("POST", "/api/tracks/import"),
 
   candidateGpx: (id: number) => `/api/candidates/${id}.gpx`,
   savedRouteGpx: (id: number) => `/api/routes/${id}.gpx`,

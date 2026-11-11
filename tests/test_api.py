@@ -1,3 +1,4 @@
+import sys
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -5,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rpa.api.app import create_app
+from rpa.api.jobs import TrackImport
 from rpa.routing.engine import Engine
 
 GPX_POINT = "{http://www.topografix.com/GPX/1/1}trk/{http://www.topografix.com/GPX/1/1}trkseg/{http://www.topografix.com/GPX/1/1}trkpt"
@@ -382,3 +384,88 @@ def test_without_a_built_page_there_is_only_the_api(grid_engine, tmp_path):
         client = TestClient(create_app(grid_engine, tmp_path / "rpa.sqlite", static_dir=static_dir))
         assert client.get("/").status_code == 404
         assert client.get("/api/meta").status_code == 200
+
+
+# New rides without a restart
+
+
+def save_rides(path, rides) -> None:
+    """The way `rpa match` writes them: whole, then swapped in."""
+    np.save(path.with_suffix(".tmp.npy"), rides)
+    path.with_suffix(".tmp.npy").replace(path)
+
+
+def test_new_rides_are_picked_up_without_a_restart(grid, tmp_path):
+    rides_path = tmp_path / "rides.npy"
+    client = TestClient(create_app(Engine(grid), tmp_path / "rpa.sqlite", rides_path=rides_path))
+    assert client.get("/api/meta").json()["has_rides"] is False
+
+    rides = np.zeros(grid.n_edges, dtype=np.uint16)
+    rides[:3] = 2
+    save_rides(rides_path, rides)
+    meta = client.get("/api/meta").json()
+    assert meta["has_rides"] is True
+    assert meta["ridden_km"] == pytest.approx(float(np.asarray(grid.edge_len_m)[:3].sum()) / 1000)
+    assert len(client.get("/api/heatmap").json()["features"][1]["geometry"]["coordinates"]) == 3
+
+    rides[3:10] = 2
+    save_rides(rides_path, rides)
+    assert len(client.get("/api/heatmap").json()["features"][1]["geometry"]["coordinates"]) == 10
+    assert client.post("/api/route", json=loop(grid)).json()["candidates"][0]["features"]["ridden_share"] >= 0
+
+
+def test_rides_for_another_graph_are_ignored(grid, tmp_path):
+    rides_path = tmp_path / "rides.npy"
+    rides = np.ones(grid.n_edges, dtype=np.uint16)
+    client = TestClient(create_app(Engine(grid, rides), tmp_path / "rpa.sqlite", rides_path=rides_path))
+    before = client.get("/api/meta").json()["ridden_km"]
+
+    save_rides(rides_path, np.ones(grid.n_edges + 5, dtype=np.uint16))
+
+    assert client.get("/api/meta").json()["ridden_km"] == before
+    assert client.post("/api/route", json=loop(grid)).status_code == 200
+
+
+# Uploading rides
+
+
+def tracks_client(grid_engine, tmp_path, code: str = "print('готово')") -> tuple[TestClient, TrackImport]:
+    tracks = TrackImport(tmp_path / "inbox", tmp_path / "jobs" / "tracks.log", [sys.executable, "-c", code])
+    return TestClient(create_app(grid_engine, tmp_path / "rpa.sqlite", tracks=tracks)), tracks
+
+
+def test_rides_are_uploaded_and_processed(grid_engine, tmp_path):
+    client, tracks = tracks_client(grid_engine, tmp_path)
+    assert client.get("/api/meta").json()["can_import_tracks"] is True
+    assert client.get("/api/tracks").json()["state"] == "idle"
+
+    sent = client.put("/api/tracks/files/Утро в лесу.gpx", content=b"<gpx></gpx>")
+    assert (sent.status_code, sent.json()) == (201, {"name": "Утро в лесу.gpx", "size": 11})
+    assert (tmp_path / "inbox" / "Утро в лесу.gpx").read_bytes() == b"<gpx></gpx>"
+
+    started = client.post("/api/tracks/import")
+    assert started.status_code == 202 and started.json()["state"] in ("running", "done")
+    tracks.wait()
+    status = client.get("/api/tracks").json()
+    assert (status["state"], status["log"]) == ("done", ["готово"])
+    assert status["inbox"] == [{"name": "Утро в лесу.gpx", "size": 11}]
+
+
+def test_upload_refusals_are_explained(grid_engine, tmp_path):
+    client, tracks = tracks_client(grid_engine, tmp_path, "import time; time.sleep(30)")
+    refused = client.put("/api/tracks/files/notes.txt", content=b"x")
+    assert refused.status_code == 400 and ".gpx" in refused.json()["detail"]
+
+    assert client.post("/api/tracks/import").status_code == 202
+    try:
+        assert client.post("/api/tracks/import").status_code == 409
+        assert client.put("/api/tracks/files/a.gpx", content=b"x").status_code == 409
+    finally:
+        tracks.stop()
+
+
+def test_without_an_importer_there_is_no_upload(client):
+    assert client.get("/api/meta").json()["can_import_tracks"] is False
+    assert client.get("/api/tracks").status_code == 404
+    assert client.put("/api/tracks/files/a.gpx", content=b"x").status_code == 404
+    assert client.post("/api/tracks/import").status_code == 404

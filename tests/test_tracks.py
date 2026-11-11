@@ -196,6 +196,7 @@ def inbox(tmp_path):
     )
     (folder / "sunday.gpx").write_bytes(gpx(line(80, lon=60.2)))
     (folder / "notes.txt").write_text("not a track")
+    (folder / ".monday.gpx").write_bytes(gpx(line(80, lon=60.3)))  # hidden: still being uploaded, say
     return folder
 
 

@@ -62,6 +62,11 @@ def region_pbf() -> Path:
     return osm_dir() / "region.osm.pbf"
 
 
+def jobs_dir() -> Path:
+    """Logs of batch jobs that the server starts."""
+    return data_dir() / "jobs"
+
+
 def db_file() -> Path:
     """Saved places and recent route requests."""
     return data_dir() / "rpa.sqlite"

@@ -80,6 +80,8 @@ def _strava_jobs(path: Path, report: ImportReport) -> Iterator[Job]:
 
 def _inbox_jobs(inbox: Path, report: ImportReport) -> Iterator[Job]:
     for path in sorted(Path(inbox).iterdir()):
+        if path.name.startswith("."):
+            continue  # a file still being uploaded, or the system's own
         if path.suffix.lower() == ".zip":
             yield from _strava_jobs(path, report)
         elif (kind := kind_of(path.name)) is not None:

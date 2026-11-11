@@ -5,16 +5,19 @@ kernel releases the GIL, which lets requests overlap.
 """
 
 import json
+import logging
+import threading
 from dataclasses import asdict
 from functools import cache
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from rpa.api.db import Db, DuplicateName
+from rpa.api.jobs import Refused, TrackImport
 from rpa.api.schemas import (
     CandidateBody,
     CandidateOut,
@@ -30,6 +33,8 @@ from rpa.api.schemas import (
     SavedRoute,
     SavedRouteFull,
     SaveRoute,
+    TracksStatus,
+    UploadedFile,
 )
 from rpa.nlu.client import LlmClient, LlmError
 from rpa.nlu.prompt import ParsedRequest, describe, messages
@@ -54,6 +59,7 @@ _NOTHING_FOUND = "Не удалось построить маршрут с та�
 
 _NO_RIDES = "Истории заездов нет: импортируйте треки (rpa import-tracks, rpa match)."
 _NO_SUCH_ROUTE = "Такого сохранённого маршрута нет."
+_NO_UPLOADS = "Загрузка треков на этом сервере не настроена."
 _NO_LLM = "Разбор текста не настроен: задайте LLM_BASE_URL, LLM_MODEL и LLM_API_KEY (см. .env.example)."
 
 
@@ -63,19 +69,44 @@ def create_app(
     gazetteer: Gazetteer | None = None,
     llm: LlmClient | None = None,
     static_dir: Path | None = None,
+    rides_path: Path | None = None,
+    tracks: TrackImport | None = None,
 ) -> FastAPI:
-    """The application; `static_dir` is the built web page, served from the root when it is there."""
+    """The application.
+
+    `static_dir` is the built web page, served from the root when it is there. `rides_path` is the
+    ride counts file next to the graph: when it is replaced, the counts are read again. `tracks`
+    takes uploaded ride files and processes them.
+    """
     app = FastAPI(title="ride-path-advisor")
     app.add_middleware(GZipMiddleware, minimum_size=2000)
     db = Db(db_path)
-    meta = _meta(engine).model_copy(update={"has_gazetteer": gazetteer is not None, "has_llm": llm is not None})
+    rides_file = _RidesFile(rides_path, engine) if rides_path is not None else None
+
+    @cache
+    def about() -> Meta:
+        capabilities = {"has_gazetteer": gazetteer is not None, "has_llm": llm is not None}
+        return _meta(engine).model_copy(update=capabilities | {"can_import_tracks": tracks is not None})
+
+    @cache
+    def heatmap_json() -> bytes:
+        # A few megabytes for a rider's whole history: built on first use, then kept.
+        return json.dumps(ridden_roads(engine.g, engine.rides), separators=(",", ":")).encode()
+
+    def with_current_rides() -> None:
+        """Whatever depends on the ride history starts with this: new rides may have been matched meanwhile."""
+        if rides_file is not None and rides_file.refresh():
+            about.cache_clear()
+            heatmap_json.cache_clear()
 
     @app.get("/api/meta")
     def get_meta() -> Meta:
-        return meta
+        with_current_rides()
+        return about()
 
     @app.post("/api/route")
     def post_route(spec: RouteSpec) -> RouteResponse:
+        with_current_rides()
         warnings = _check_point(engine, spec.start, "старт")
         if spec.end is not None:
             warnings += _check_point(engine, spec.end, "финиш")
@@ -175,14 +206,10 @@ def create_app(
         if not db.delete_route(route_id):
             raise HTTPException(404, _NO_SUCH_ROUTE)
 
-    @cache
-    def heatmap_json() -> bytes:
-        # A few megabytes for a rider's whole history: built on first use, then kept.
-        return json.dumps(ridden_roads(engine.g, engine.rides), separators=(",", ":")).encode()
-
     @app.get("/api/heatmap")
     def get_heatmap() -> Response:
         """Roads from the ride history as GeoJSON: one MultiLineString per level of use."""
+        with_current_rides()
         if engine.rides is None:
             raise HTTPException(404, _NO_RIDES)
         return Response(heatmap_json(), media_type="application/geo+json")
@@ -213,9 +240,69 @@ def create_app(
         if not db.delete_place(place_id):
             raise HTTPException(404, "Такого места нет.")
 
+    def importer() -> TrackImport:
+        if tracks is None:
+            raise HTTPException(404, _NO_UPLOADS)
+        return tracks
+
+    @app.get("/api/tracks")
+    def get_tracks() -> TracksStatus:
+        return importer().status()
+
+    @app.put("/api/tracks/files/{name}", status_code=201)
+    async def put_track_file(name: str, request: Request) -> UploadedFile:
+        """Store the request body as a ride file to be processed; an archive may be large, so it is not held in memory."""
+        try:
+            with importer().receiving(name) as file:
+                async for chunk in request.stream():
+                    file.write(chunk)
+        except Refused as refusal:
+            raise HTTPException(refusal.status, str(refusal)) from None
+        return UploadedFile(name=name, size=file.size)
+
+    @app.post("/api/tracks/import", status_code=202)
+    def post_tracks_import() -> TracksStatus:
+        """Start processing everything uploaded; the rides appear in routes once it is done."""
+        if not importer().start():
+            raise HTTPException(409, "Обработка уже идёт.")
+        return importer().status()
+
     if static_dir is not None and (static_dir / "index.html").is_file():
         app.mount("/", StaticFiles(directory=static_dir, html=True))
     return app
+
+
+class _RidesFile:
+    """Ride counts on disk, replaced as a whole by `rpa match`; a replaced file is read into the engine."""
+
+    def __init__(self, path: Path, engine: Engine) -> None:
+        self.path = path
+        self.engine = engine
+        self._lock = threading.Lock()
+        self._seen = self._stamp()
+
+    def _stamp(self) -> tuple[int, int] | None:
+        try:
+            status = self.path.stat()
+        except OSError:
+            return None
+        return status.st_mtime_ns, status.st_ino
+
+    def refresh(self) -> bool:
+        """True if the engine got new counts. A vanished or unusable file leaves the counts as they were."""
+        stamp = self._stamp()
+        if stamp is None or stamp == self._seen:
+            return False
+        with self._lock:
+            if stamp == self._seen:
+                return False
+            self._seen = stamp
+            try:
+                self.engine.set_rides(np.load(self.path))
+            except (OSError, ValueError) as error:  # most likely counted for a graph built since this server started
+                logging.getLogger("uvicorn.error").warning("Заезды из %s не подошли: %s", self.path, error)
+                return False
+            return True
 
 
 def _gpx(body: CandidateBody, name: str | None, file_name: str) -> Response:
@@ -243,6 +330,7 @@ def _meta(engine: Engine) -> Meta:
         has_terrain=engine.forest is not None,
         has_gazetteer=False,
         has_llm=False,
+        can_import_tracks=False,
     )
 
 

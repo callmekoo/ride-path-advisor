@@ -141,6 +141,45 @@ def test_serve_hands_out_the_built_page(data_dir, tmp_path, monkeypatch):
     assert "" in {getattr(route, "path", None) for route in started["app"].routes}
 
 
+def test_serve_watches_rides_and_takes_uploads(data_dir, monkeypatch):
+    import uvicorn
+
+    started = {}
+    monkeypatch.setattr(uvicorn, "run", lambda application, **options: started.update(app=application))
+    monkeypatch.chdir(data_dir)  # away from the developer's .env
+    monkeypatch.setenv("RPA_WEB_DIR", str(data_dir / "no-page"))
+    assert runner.invoke(app, ["serve"]).exit_code == 0
+
+    from fastapi.testclient import TestClient
+
+    client = TestClient(started["app"])
+    assert client.get("/api/meta").json()["can_import_tracks"] is True
+    assert client.put("/api/tracks/files/a.gpx", content=b"<gpx/>").status_code == 201
+    assert (data_dir / "inbox" / "a.gpx").exists()
+
+
+def test_sync_tracks_without_an_inbox_explains_what_to_do(data_dir):
+    result = runner.invoke(app, ["sync-tracks"])
+    assert result.exit_code == 1 and "inbox" in result.output
+
+
+def test_update_rebuilds_everything_from_the_map_at_hand(data_dir):
+    before = {path.name for path in (data_dir / "graph").iterdir()}
+    result = runner.invoke(app, ["update", "--pbf", str(MICRO), "--no-rasters"])
+
+    assert result.exit_code == 0, result.output
+    assert "Перезапустите сервер" in result.output
+    current = data_dir / "graph" / "current"
+    assert {path.name for path in (data_dir / "graph").iterdir()} == before  # the same map gives the same graph
+    assert (current / "gazetteer.sqlite").exists() and (current / "water.json").exists()
+
+
+def test_update_without_a_map_explains_what_to_do(tmp_path, monkeypatch):
+    monkeypatch.setenv("RPA_DATA_DIR", str(tmp_path / "data"))
+    result = runner.invoke(app, ["update", "--skip-fetch"])
+    assert result.exit_code == 1 and "--skip-fetch" in result.output
+
+
 def test_gazetteer_indexes_named_places_of_the_map(data_dir):
     result = runner.invoke(app, ["gazetteer", str(MICRO), "--find", "озеро Тихое", "--find", "Нигденет"])
 

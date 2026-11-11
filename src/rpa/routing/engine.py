@@ -70,6 +70,12 @@ class Engine:
         self.water_rank: np.ndarray | None = None  # f32[N]: how good a water destination, lower is better; inf = none
         self._water_of_node: dict[int, str] = {}
 
+    def set_rides(self, rides: np.ndarray | None) -> None:
+        """Replace the ride counts, e.g. after new tracks were matched."""
+        if rides is not None and len(rides) != self.g.n_edges:
+            raise ValueError(f"rides has {len(rides)} entries but the graph has {self.g.n_edges} edges")
+        self.rides = rides
+
     def set_water(self, nodes: np.ndarray, bodies: list[dict]) -> None:
         """Register water access: `nodes` is u32[K, 2] of (node, index into `bodies`)."""
         self.at_water = np.zeros(self.g.n_nodes, dtype=bool)

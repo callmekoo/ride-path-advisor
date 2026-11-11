@@ -104,6 +104,20 @@ class Meta(BaseModel):
     has_terrain: bool
     has_gazetteer: bool  # place names can be looked up
     has_llm: bool  # free-text requests can be parsed
+    can_import_tracks: bool  # ride files can be uploaded and processed
+
+
+class UploadedFile(BaseModel):
+    name: str
+    size: int
+
+
+class TracksStatus(BaseModel):
+    state: Literal["idle", "running", "done", "failed"]
+    started: str | None  # UTC, "YYYY-MM-DD HH:MM:SS"
+    finished: str | None
+    log: list[str]  # the last lines that the processing printed
+    inbox: list[UploadedFile]  # files waiting to be processed
 
 
 class ParseRequest(BaseModel):

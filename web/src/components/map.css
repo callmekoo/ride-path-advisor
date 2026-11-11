@@ -75,3 +75,20 @@
   height: 4px;
   border-radius: 2px;
 }
+
+.map-toggle {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: #fff;
+  color: #1f2937;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+  font: 13px/1.4 system-ui, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
