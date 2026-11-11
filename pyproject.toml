@@ -17,6 +17,8 @@ dependencies = [
     "fitdecode>=0.10",
     "pyproj>=3.8",
     "rasterio>=1.5",
+    "fastapi>=0.162.4",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
