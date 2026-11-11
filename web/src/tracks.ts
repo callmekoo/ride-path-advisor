@@ -25,7 +25,8 @@ export function stateText(status: TracksStatus | null): string {
       return "Обработка не удалась — смотрите журнал ниже.";
     default: {
       const waiting = status?.inbox.length ?? 0;
-      return waiting > 0 ? `Файлы ждут обработки: ${waiting}` : "Загрузите файлы, чтобы начать.";
+      // Uploaded files stay on the server and every run works through all of them, so "waiting" would mislead.
+      return waiting > 0 ? "Загрузите новые файлы или обработайте заново те, что уже на сервере." : "Загрузите файлы, чтобы начать.";
     }
   }
 }

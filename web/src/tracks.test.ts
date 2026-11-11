@@ -52,7 +52,7 @@ describe("stateText", () => {
   });
 
   it("counts files waiting in the inbox", () => {
-    expect(stateText(status("idle", 3))).toBe("Файлы ждут обработки: 3");
+    expect(stateText(status("idle", 3))).toBe("Загрузите новые файлы или обработайте заново те, что уже на сервере.");
   });
 
   it("describes a run", () => {

@@ -13,7 +13,7 @@ export interface TracksPanelProps {
   error: string | null;
   /** Upload these files one by one, then start processing. */
   onUpload(files: File[]): void;
-  /** Start processing of files already waiting on the server. */
+  /** Process again what is already on the server. */
   onImport(): void;
 }
 
@@ -80,9 +80,9 @@ export function TracksPanel({ status, riddenKm, uploading, error, onUpload, onIm
 
       {waiting > 0 && !running && (
         <div className="tracks-waiting">
-          <span>На сервере ждут обработки: {waiting}</span>
+          <span>Файлов на сервере: {waiting}</span>
           <button type="button" className="btn" disabled={uploading !== null} onClick={onImport}>
-            Обработать без загрузки
+            Обработать заново
           </button>
         </div>
       )}

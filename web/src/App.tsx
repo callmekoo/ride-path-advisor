@@ -83,7 +83,7 @@ export function App() {
   const [tracksStatus, setTracksStatus] = useState<TracksStatus | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
   const [tracksError, setTracksError] = useState<string | null>(null);
-  const tracksState = useRef<TracksStatus["state"] | null>(null); // the state last seen, to notice a run ending
+  const tracksFinished = useRef<string | null>(null); // when the last run known here ended, to notice the next one
   const heatmapOnNow = useRef(heatmapOn);
   heatmapOnNow.current = heatmapOn;
   const entryId = useRef(0);
@@ -117,10 +117,11 @@ export function App() {
   }, [say]);
 
   const showTracks = useCallback((status: TracksStatus) => {
-    const finished = tracksState.current === "running" && status.state === "done";
-    tracksState.current = status.state;
+    // By the time of its end, not by seeing it run: a short run can be over before the first look at it.
+    const finished = status.state === "done" && status.finished !== tracksFinished.current;
     setTracksStatus(status);
     if (!finished) return;
+    tracksFinished.current = status.finished;
     // New rides change the numbers and the heatmap: take both again.
     api.meta().then(setMeta, () => undefined);
     setHeatmap(null);

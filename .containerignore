@@ -1,0 +1,16 @@
+# Nothing personal and nothing built on the host goes into the image.
+.git
+.env
+.env.*
+!.env.example
+data
+out
+docs
+spikes
+tests
+.venv
+**/__pycache__
+**/*.so
+kernel/target
+web/node_modules
+web/dist
