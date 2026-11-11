@@ -35,6 +35,7 @@ export CARGO_HTTP_CAINFO=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem  # и
 uv sync                # зависимости + сборка Rust-ядра
 uv run pytest -q       # все тесты, ~5 с
 uv run rpa eval        # эталонные запросы на реальном графе → out/eval.html; код возврата 1 при провале порогов
+uv run rpa serve       # веб-API на 127.0.0.1:8000; curl к нему — с `--noproxy '*'`
 ```
 
 Полный конвейер данных — в `docs/roadmap.md`, раздел «Данные».
@@ -46,6 +47,7 @@ uv run rpa eval        # эталонные запросы на реальном
 - `src/rpa/osm` — сборка графа из pbf; `graph` — формат на диске; `tracks` — импорт заездов;
   `match` — привязка к дорогам (Valhalla) и подсчёт заездов по рёбрам; `enrich` — вода, лес, высоты;
   `routing` — `RouteSpec` → веса → генератор → оценка → отбор; `eval` — эталонные запросы;
+  `api` — FastAPI-приложение и SQLite (места, последние запросы);
   `viz` — отладочные HTML-страницы; `cli.py` — команды `rpa`.
 - Дуга `a = 2·e + d` (`d = 0` — по направлению OSM-пути): `reverse(a) = a ^ 1`, `edge(a) = a >> 1`.
 - Инвариант ядра: вес дуги равен `+inf` либо не меньше длины ребра в метрах.
