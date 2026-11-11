@@ -41,17 +41,29 @@ class LengthKm(BaseModel):
         return cls(target=(low + high) / 2, min=low, max=high)
 
 
+class AvoidArea(BaseModel):
+    """A circle the route should keep out of if it reasonably can."""
+
+    point: Point
+    radius_m: float = Field(ge=100, le=50_000)
+
+
 class RouteSpec(BaseModel):
     start: Point
     end: Point | None = None
     shape: Literal["loop", "p2p"]
     length_km: LengthKm | None = None
     prefs: Prefs = Prefs()
+    via: Point | None = None  # a place the route must pass; its label names it in the result
     via_category: Literal["water"] | None = None  # the route must pass a place of this kind
+    avoid: list[AvoidArea] = []
+    bearing_deg: float | None = Field(default=None, ge=0, lt=360)  # where a loop should head; 0 = north
     n_candidates: int = Field(default=3, ge=1, le=5)
 
     @model_validator(mode="after")
     def _shape_matches_fields(self) -> Self:
+        if self.via is not None and self.via_category is not None:
+            raise ValueError("a route passes either a named place or a kind of place, not both")
         if self.shape == "loop":
             if self.end is not None:
                 raise ValueError("a loop returns to its start and takes no end point")

@@ -7,7 +7,7 @@ from rpa.routing.cost import Prefs
 from rpa.routing.diversity import core_edges, overlap
 from rpa.routing.engine import Engine
 from rpa.routing.generate import generate
-from rpa.routing.spec import LengthKm, Point, RouteSpec
+from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
 
 
 def node(i: int, j: int) -> int:
@@ -162,3 +162,95 @@ def test_p2p_via_water_detours_to_the_lake(grid, lake_engine):
     for candidate in candidates:
         assert_sound(lake_engine, candidate.path.arcs, node(2, 10), node(18, 10))
         assert lake_engine.at_water[lake_engine.arc_head[candidate.path.arcs]].any()
+
+
+# --- named via places, avoided areas, headings -------------------------------
+
+
+def nodes_on(engine: Engine, candidate) -> set[int]:
+    arcs = candidate.path.arcs
+    return {int(engine.arc_tail[arcs[0]]), *engine.arc_head[arcs].tolist()}
+
+
+def named(grid, i: int, j: int, label: str) -> Point:
+    return point(grid, i, j).model_copy(update={"label": label})
+
+
+def test_loop_through_a_named_place_passes_it_and_fits_the_length(grid, grid_engine):
+    spec = loop_spec(grid, 10, 10, 16).model_copy(update={"via": named(grid, 14, 12, "Сысерть")})
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 2
+    for candidate in candidates:
+        assert node(14, 12) in nodes_on(grid_engine, candidate)
+        assert 14.4 <= candidate.path.length_m / 1000 <= 17.6
+        assert candidate.via_label == "Сысерть" and candidate.note is None
+        assert_sound(grid_engine, candidate.path.arcs, node(10, 10), node(10, 10))
+
+
+def test_place_too_far_for_the_wanted_loop_is_still_reached_with_a_note(grid, grid_engine):
+    spec = loop_spec(grid, 10, 10, 6).model_copy(update={"via": named(grid, 19, 10, "Дальнее")})
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert node(19, 10) in nodes_on(grid_engine, candidate)
+        # 4.5 km out and back by the next street over, so that no road is ridden twice.
+        assert candidate.path.length_m / 1000 == pytest.approx(10.0, abs=0.1)
+        assert "Дальнее" in candidate.note and "10 км" in candidate.note
+
+
+def test_point_to_point_through_a_place_off_the_direct_line(grid, grid_engine):
+    spec = p2p_spec(grid, None).model_copy(update={"via": named(grid, 10, 16, "Гора")})
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert node(10, 16) in nodes_on(grid_engine, candidate)
+        assert_sound(grid_engine, candidate.path.arcs, node(2, 10), node(18, 10))
+    assert candidates[0].path.length_m / 1000 >= 14.0  # 8 km east plus 3 km north and back
+
+
+def test_point_to_point_through_a_place_with_a_length(grid, grid_engine):
+    spec = p2p_spec(grid, LengthKm.around(20)).model_copy(update={"via": named(grid, 10, 16, "Гора")})
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert node(10, 16) in nodes_on(grid_engine, candidate)
+        assert 18.0 <= candidate.path.length_m / 1000 <= 22.0
+
+
+def test_avoided_area_is_ridden_around(grid, grid_engine):
+    centre = point(grid, 10, 10)
+    spec = p2p_spec(grid, None).model_copy(
+        update={"avoid": [AvoidArea(point=centre, radius_m=1200)], "n_candidates": 1}
+    )
+    (candidate,) = generate(grid_engine, spec)
+
+    lonlat = np.asarray(grid.node_lonlat)[sorted(nodes_on(grid_engine, candidate))]
+    east_km = (lonlat[:, 0] - centre.lon) * 111.195 * np.cos(np.radians(centre.lat))
+    north_km = (lonlat[:, 1] - centre.lat) * 111.195
+    assert np.hypot(east_km, north_km).min() > 1.2
+    assert candidate.path.length_m / 1000 > 8.0
+
+
+def test_heading_pulls_every_loop_one_way(grid, grid_engine):
+    spec = loop_spec(grid, 10, 10, 8).model_copy(update={"bearing_deg": 90.0})
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert candidate.path.coords[:, 0].mean() > spec.start.lon
+        assert candidate.path.coords[:, 0].min() >= spec.start.lon - 0.009  # at most a block westwards
+
+
+def test_a_route_passes_a_named_place_or_a_kind_of_place_but_not_both(grid):
+    with pytest.raises(ValueError, match="either"):
+        RouteSpec(
+            start=point(grid, 10, 10),
+            shape="loop",
+            length_km=LengthKm.around(10),
+            via=point(grid, 12, 12),
+            via_category="water",
+        )
