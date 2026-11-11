@@ -10,7 +10,8 @@
    отличия кода от исходного дизайна.
 2. Исходный дизайн и принятые решения: [`docs/superpowers/specs/2026-11-10-ride-path-advisor-design.md`](docs/superpowers/specs/2026-11-10-ride-path-advisor-design.md).
    Где он расходится с `docs/roadmap.md`, прав roadmap.
-3. Проверить состояние: `git log --oneline | head`, `uv run pytest -q`, `uv run rpa --help`.
+3. Проверить состояние: `git log --oneline | head`, `uv run pytest -q`, `uv run rpa --help`,
+   `cd web && npm test`.
 
 ## Как ведётся работа
 
@@ -35,9 +36,14 @@ export CARGO_HTTP_CAINFO=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem  # и
 uv sync                # зависимости + сборка Rust-ядра
 uv run pytest -q       # все тесты, ~5 с
 uv run rpa eval        # эталонные запросы на реальном графе → out/eval.html; код возврата 1 при провале порогов
-uv run rpa serve       # веб-API на 127.0.0.1:8000; curl к нему — с `--noproxy '*'`
+uv run rpa serve       # страница и API на 127.0.0.1:8000; curl к нему — с `--noproxy '*'`
 uv run rpa gazetteer   # указатель названий из OSM → gazetteer.sqlite в каталоге графа
 uv run rpa nlu-eval    # эталонные формулировки на живой модели (нужен .env, тратит токены)
+
+cd web                 # фронтенд; Node 24 лежит в ~/.local/bin
+npm install            # новые зависимости — с `--before=<дата двухнедельной давности>`
+npm test               # vitest: логика диалога, чипы, геометрия
+npm run build          # проверка типов и сборка в web/dist — её раздаёт `rpa serve`
 ```
 
 Полный конвейер данных — в `docs/roadmap.md`, раздел «Данные».
@@ -52,6 +58,8 @@ uv run rpa nlu-eval    # эталонные формулировки на жив
   `nlu` — текст → `ParsedRequest` (LLM) → `RouteSpec` или вопрос (без LLM);
   `api` — FastAPI-приложение и SQLite (места, последние запросы);
   `viz` — отладочные HTML-страницы; `cli.py` — команды `rpa`.
+- `web/` — страница: `src/api.ts` (типы и вызовы API), `session.ts` / `chips.ts` / `geo.ts`
+  (чистая логика с тестами), `App.tsx` (состояние), `components/` (только отрисовка).
 - Дуга `a = 2·e + d` (`d = 0` — по направлению OSM-пути): `reverse(a) = a ^ 1`, `edge(a) = a >> 1`.
 - Инвариант ядра: вес дуги равен `+inf` либо не меньше длины ребра в метрах.
 - Центральный контракт — `RouteSpec` (`src/rpa/routing/spec.py`): его производят разбор текста
@@ -64,6 +72,8 @@ uv run rpa nlu-eval    # эталонные формулировки на жив
 - Не отправлять данные треков в LLM и во внешние сервисы. В модель уходят только текст запроса,
   названия мест и статистика вариантов; координаты — нет.
 - Не читать и не печатать `.env`: там ключ LLM.
+- Не рассматривать снимки экрана и выгрузки с включённой теплокартой и не печатать `/api/heatmap`:
+  это история заездов. Проверять слой по косвенным признакам (код ответа, легенда).
 - Не использовать Strava API (политика 2026 года запрещает хранение и агрегацию) — только архив
   «Скачать свои данные».
 - Не запускать `cargo test` (не линкуется без `python3-devel`) и `python -m valhalla …`

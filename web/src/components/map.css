@@ -1,0 +1,77 @@
+.map {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.map-start {
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: #14532d;
+  border: 3px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* The finish: the same dot, inside out. */
+.map-finish {
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid #14532d;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.map-option {
+  width: 26px;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: #1f2937;
+  color: #fff;
+  font: 600 13px/22px system-ui, sans-serif;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
+.map-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 36px; /* above the scale control */
+  padding: 8px 10px;
+  background: #fff;
+  color: #1f2937;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+  font: 12px/1.4 system-ui, sans-serif;
+  pointer-events: none;
+}
+
+.map-legend-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.map-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-legend-swatch {
+  width: 16px;
+  height: 4px;
+  border-radius: 2px;
+}
