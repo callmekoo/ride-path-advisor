@@ -5,7 +5,8 @@
 Маршрут идёт по дорожному графу OpenStreetMap, а дороги из собственной истории
 заездов получают бонус.
 
-Дизайн: [`docs/superpowers/specs/2026-11-10-ride-path-advisor-design.md`](docs/superpowers/specs/2026-11-10-ride-path-advisor-design.md).
+Состояние и планы: [`docs/roadmap.md`](docs/roadmap.md). Исходный дизайн:
+[`docs/superpowers/specs/2026-11-10-ride-path-advisor-design.md`](docs/superpowers/specs/2026-11-10-ride-path-advisor-design.md).
 
 ## Состояние
 
