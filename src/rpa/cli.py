@@ -80,6 +80,9 @@ def build_graph_command(
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     save_graph(graph, target, meta)
+    if config.match_file().exists():
+        # Rides are matched to OSM ways, not to graph edges, so they carry over to a rebuilt graph.
+        _write_rides(target, graph)
     if out is None:
         link = config.current_graph_dir()
         temp_link = link.with_name("current.tmp")
@@ -220,3 +223,73 @@ def import_tracks_command(
     for error in report.unreadable:
         typer.echo(f"Не удалось прочитать: {error}", err=True)
     typer.echo(f"Треки записаны в {config.tracks_dir()}")
+
+
+def _write_rides(directory: Path, graph: GraphData) -> np.ndarray:
+    """Count rides per edge of `graph` from the matched tracks and store them next to the graph."""
+    from rpa.match.matcher import load_matched
+    from rpa.match.project import project
+    from rpa.routing.engine import RIDES_FILE
+
+    rides = project(graph, load_matched(config.match_file()))
+    temp = directory / "rides.tmp.npy"
+    np.save(temp, rides)
+    temp.replace(directory / RIDES_FILE)
+    ridden = rides > 0
+    km = float(np.asarray(graph.edge_len_m, dtype=np.float64)[ridden].sum()) / 1000
+    typer.echo(f"Проеханных рёбер: {int(ridden.sum())} ({km:.0f} км дорог), максимум заездов по ребру: {int(rides.max())}")
+    return rides
+
+
+@app.command("match")
+def match_command(
+    jobs: Annotated[int, typer.Option(min=1, help="Параллельных процессов")] = min(12, os.cpu_count() or 1),
+    graph_dir: Annotated[Path | None, typer.Option("--graph", help="Каталог графа")] = None,
+    pbf: Annotated[Path | None, typer.Option(help="Файл OSM, из которого собран граф")] = None,
+) -> None:
+    """Привязать импортированные треки к дорогам и посчитать заезды по каждому ребру графа."""
+    from rpa.match.matcher import build_tiles, match_tracks, save_matched
+    from rpa.tracks.store import load_tracks
+
+    if not (config.tracks_dir() / "tracks.json").exists():
+        typer.echo("Треки не импортированы. Сначала: rpa import-tracks", err=True)
+        raise typer.Exit(1)
+    directory = graph_dir or config.current_graph_dir()
+    graph = _load_current_graph(graph_dir)
+    source = pbf or config.region_pbf()
+
+    # Tiles must come from the same OSM file as the graph, or way ids and geometry may disagree.
+    sha = _sha256(source)
+    stamp = config.valhalla_dir() / "source_sha256"
+    valhalla_config = config.valhalla_dir() / "valhalla.json"
+    if not valhalla_config.exists() or not stamp.exists() or stamp.read_text() != sha:
+        typer.echo("Собираю тайлы Valhalla (около минуты)")
+        valhalla_config = build_tiles(source, config.valhalla_dir())
+        stamp.write_text(sha)
+    if load_graph(directory)[1].get("source_sha256") != sha:
+        typer.echo("Внимание: граф собран из другого файла OSM; пересоберите его: rpa build-graph", err=True)
+
+    tracks = load_tracks(config.tracks_dir())
+    typer.echo(f"Привязываю сегментов: {tracks.n_segments}")
+    matched, report = match_tracks(tracks, valhalla_config, jobs, log=typer.echo)
+    save_matched(matched, config.match_file())
+    share = report.matched_km / report.track_km if report.track_km else 0.0
+    typer.echo(f"Привязано {report.matched_km:.0f} из {report.track_km:.0f} км ({share:.0%}), не удалось: {report.failed} сегм.")
+    _write_rides(directory.resolve(), graph)
+
+
+@app.command("pop-map")
+def pop_map_command(
+    out: Annotated[Path, typer.Option(help="Куда записать HTML-карту")] = Path("out/heatmap.html"),
+    graph_dir: Annotated[Path | None, typer.Option("--graph", help="Каталог графа")] = None,
+) -> None:
+    """Нарисовать карту проеханных дорог."""
+    from rpa.routing.engine import load_engine
+    from rpa.viz.heat_page import render_heatmap
+
+    engine = load_engine(graph_dir or config.current_graph_dir())
+    if engine.rides is None:
+        typer.echo("Заезды ещё не привязаны. Сначала: rpa match", err=True)
+        raise typer.Exit(1)
+    render_heatmap(engine.g, engine.rides, out)
+    typer.echo(f"Карта: {out}")

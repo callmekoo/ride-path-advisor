@@ -51,3 +51,12 @@ def tracks_dir() -> Path:
 
 def valhalla_dir() -> Path:
     return data_dir() / "valhalla"
+
+
+def match_file() -> Path:
+    """Map-matched tracks, independent of the graph version."""
+    return data_dir() / "match" / "matched.npz"
+
+
+def region_pbf() -> Path:
+    return osm_dir() / "region.osm.pbf"
