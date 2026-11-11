@@ -293,3 +293,23 @@ def pop_map_command(
         raise typer.Exit(1)
     render_heatmap(engine.g, engine.rides, out)
     typer.echo(f"Карта: {out}")
+
+
+@app.command("enrich")
+def enrich_command(
+    graph_dir: Annotated[Path | None, typer.Option("--graph", help="Каталог графа")] = None,
+    pbf: Annotated[Path | None, typer.Option(help="Файл OSM, из которого собран граф")] = None,
+) -> None:
+    """Дополнить граф сведениями об окружении дорог: выходы к воде."""
+    from rpa.enrich.water import read_water, save_water, water_access
+
+    directory = (graph_dir or config.current_graph_dir()).resolve()
+    graph = _load_current_graph(graph_dir)
+    typer.echo("Читаю водоёмы и реки из OSM")
+    nodes, bodies = water_access(graph, read_water(pbf or config.region_pbf()))
+    save_water(directory, nodes, bodies)
+    rivers = sum(body["kind"] == "river" for body in bodies)
+    typer.echo(
+        f"Водоёмов с подъездом: {len(bodies) - rivers}, участков рек: {rivers}, "
+        f"узлов у воды: {len(np.unique(nodes[:, 0]))}"
+    )

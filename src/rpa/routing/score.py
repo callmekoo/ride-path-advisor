@@ -40,6 +40,7 @@ class Candidate:
     features: Features
     score: float
     note: str | None  # shown to the user, e.g. why the length differs from the request
+    via_label: str | None = None  # the place the route was asked to pass, e.g. the lake it reaches
 
 
 def features(engine: Engine, w: np.ndarray, arcs: np.ndarray, length: LengthKm | None) -> Features:

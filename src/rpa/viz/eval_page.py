@@ -116,7 +116,7 @@ def _result_json(result: CaseResult) -> dict:
             {
                 "colour": _COLOURS[i % len(_COLOURS)],
                 "coords": np.round(candidate.path.coords, 6).tolist(),
-                "note": candidate.note,
+                "note": " · ".join(filter(None, [candidate.via_label, candidate.note])) or None,
                 "cells": [
                     f"{f.length_m / 1000:.1f}",
                     f"{f.length_error:.0%}",

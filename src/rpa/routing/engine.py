@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 import rpa_kernel
+from rpa.enrich.water import load_water
 from rpa.graph.snap import Snapper
 from rpa.graph.store import GraphData, load_graph
 from rpa.routing.cost import Prefs, arc_weights
@@ -17,7 +18,25 @@ def load_engine(directory: Path) -> "Engine":
     """Engine for the graph in `directory`, with ride counts if tracks were matched to it."""
     graph, _ = load_graph(directory)
     rides_path = Path(directory) / RIDES_FILE
-    return Engine(graph, np.load(rides_path) if rides_path.exists() else None)
+    engine = Engine(graph, np.load(rides_path) if rides_path.exists() else None)
+    water = load_water(directory)
+    if water is not None:
+        engine.set_water(*water)
+    return engine
+
+
+_WATER_WORD = {"lake": "озеро", "pond": "пруд", "reservoir": "водохранилище", "river": "река", "water": "водоём"}
+# Standing water is a better place to ride to than a river crossing.
+_RANK_STANDING, _RANK_RIVER = 0.0, 1.0
+
+
+def _water_label(body: dict) -> str:
+    word, name = _WATER_WORD[body["kind"]], body["name"]
+    if not name:
+        return word
+    # Many names already say what they are: "озеро Чусовое", "Верхнемакаровский пруд".
+    says_what = any(known in name.lower() for known in ("озеро", "пруд", "водохранилище", "река", "вдхр", "карьер"))
+    return name if says_what else f"{word} {name}"
 
 
 class Engine:
@@ -37,6 +56,24 @@ class Engine:
         self.arc_tail = np.stack([g.edge_u, g.edge_v], axis=1).ravel()
         self.arc_head = np.stack([g.edge_v, g.edge_u], axis=1).ravel()
         self.degree = np.bincount(self.arc_tail, minlength=g.n_nodes)
+        self.at_water: np.ndarray | None = None  # bool[N]; None until water is known
+        self.water_rank: np.ndarray | None = None  # f32[N]: how good a water destination, lower is better; inf = none
+        self._water_of_node: dict[int, str] = {}
+
+    def set_water(self, nodes: np.ndarray, bodies: list[dict]) -> None:
+        """Register water access: `nodes` is u32[K, 2] of (node, index into `bodies`)."""
+        self.at_water = np.zeros(self.g.n_nodes, dtype=bool)
+        self.at_water[nodes[:, 0]] = True
+        rank = np.array([_RANK_RIVER if bodies[body]["kind"] == "river" else _RANK_STANDING for body in nodes[:, 1]])
+        self.water_rank = np.full(self.g.n_nodes, np.inf, dtype=np.float32)
+        np.minimum.at(self.water_rank, nodes[:, 0], rank)
+        # Where a node touches several bodies, name the largest.
+        order = np.argsort([bodies[body]["area_m2"] for body in nodes[:, 1]], kind="stable")
+        self._water_of_node = {int(nodes[i, 0]): _water_label(bodies[int(nodes[i, 1])]) for i in order}
+
+    def water_label(self, node: int) -> str | None:
+        """What water the node is at, e.g. "озеро Шарташ"; None if it is not at water."""
+        return self._water_of_node.get(node)
 
     def weights(self, prefs: Prefs) -> np.ndarray:
         return arc_weights(self.g, prefs, self.rides)

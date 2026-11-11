@@ -26,6 +26,11 @@ def _loop(km: LengthKm, **prefs) -> RouteSpec:
 CASES = [
     Case("loop-45", "кольцо около 45 км", _loop(LengthKm.around(45))),
     Case("loop-45-quiet", "кольцо около 45 км, меньше больших дорог", _loop(LengthKm.around(45), avoid_major=1.0)),
+    Case(
+        "loop-45-water",
+        "заезд около 45 км к воде, меньше больших дорог",
+        _loop(LengthKm.around(45), avoid_major=0.9).model_copy(update={"via_category": "water"}),
+    ),
     Case("loop-80", "кольцо около 80 км", _loop(LengthKm.around(80))),
     Case("loop-120", "кольцо около 120 км", _loop(LengthKm.around(120))),
     Case(

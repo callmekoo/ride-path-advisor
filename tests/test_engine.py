@@ -59,3 +59,19 @@ def test_nodes_within_radius(grid, grid_engine):
     near = grid_engine.snapper.nodes_within(lon, lat, 600.0)
     # The centre node and its four neighbours 500 m away.
     assert sorted(near.tolist()) == sorted([220, 219, 221, 199, 241])
+
+
+def test_water_labels_and_ranks(grid):
+    engine = Engine(grid)
+    bodies = [
+        {"name": "Шарташ", "kind": "lake", "area_m2": 7_000_000},
+        {"name": "озеро Чусовое", "kind": "water", "area_m2": 2_000_000},
+        {"name": "Исеть", "kind": "river", "area_m2": 0},
+        {"name": "", "kind": "pond", "area_m2": 60_000},
+    ]
+    engine.set_water(np.array([[0, 0], [1, 1], [2, 2], [3, 3], [4, 2], [4, 0]], dtype=np.uint32), bodies)
+    assert [engine.water_label(n) for n in range(6)] == [
+        "озеро Шарташ", "озеро Чусовое", "река Исеть", "пруд", "озеро Шарташ", None,
+    ]  # fmt: skip
+    assert engine.water_rank[:6].tolist() == [0.0, 0.0, 1.0, 0.0, 0.0, np.inf]
+    assert engine.at_water[:6].tolist() == [True, True, True, True, True, False]

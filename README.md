@@ -24,6 +24,7 @@ uv run rpa eval --out out/eval.html             # эталонные запро�
 uv run rpa import-tracks                       # чистка и нарезка → data/tracks
 uv run rpa match                               # привязка к дорогам → заезды по рёбрам графа
 uv run rpa pop-map                             # карта проеханных дорог → out/heatmap.html
+uv run rpa enrich                              # выходы к воде (после каждой пересборки графа)
 ```
 
 Замеры на графе региона (Свердловская область + 100 км, выгрузки OSM от 09.11.2026;

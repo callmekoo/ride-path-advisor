@@ -47,6 +47,7 @@ class RouteSpec(BaseModel):
     shape: Literal["loop", "p2p"]
     length_km: LengthKm | None = None
     prefs: Prefs = Prefs()
+    via_category: Literal["water"] | None = None  # the route must pass a place of this kind
     n_candidates: int = Field(default=3, ge=1, le=5)
 
     @model_validator(mode="after")

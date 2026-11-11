@@ -121,3 +121,44 @@ def test_p2p_between_disconnected_points_gives_no_candidates(micro):
     # Out of node 7 there is only a one-way street pointing at it.
     spec = RouteSpec(start=Point(lon=60.004, lat=56.800), end=Point(lon=60.000, lat=56.800), shape="p2p")
     assert generate(engine, spec) == []
+
+
+@pytest.fixture(scope="module")
+def lake_engine(grid):
+    """The grid with a lake by its north-east corner: nodes (18..20, 18..20) are at the water."""
+    engine = Engine(grid)
+    shore = np.array([[node(i, j), 0] for i in range(18, 21) for j in range(18, 21)], dtype=np.uint32)
+    engine.set_water(shore, [{"name": "Дальнее", "kind": "lake", "area_m2": 50_000}])
+    return engine
+
+
+def test_loop_to_water_reaches_the_lake(grid, lake_engine):
+    spec = loop_spec(grid, 10, 10, 24.0).model_copy(update={"via_category": "water"})
+    candidates = generate(lake_engine, spec)
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert_sound(lake_engine, candidate.path.arcs, node(10, 10), node(10, 10))
+        assert lake_engine.at_water[lake_engine.arc_head[candidate.path.arcs]].any()
+        assert candidate.via_label == "озеро Дальнее"
+        assert 21.6 <= candidate.path.length_m / 1000 <= 26.4
+
+
+def test_loop_to_water_out_of_reach_gives_nothing(grid, lake_engine):
+    # A 6 km loop from the far corner cannot get to a lake 13 km away.
+    spec = loop_spec(grid, 0, 0, 6.0).model_copy(update={"via_category": "water"})
+    assert generate(lake_engine, spec) == []
+
+
+def test_water_asked_for_but_unknown_gives_nothing(grid, grid_engine):
+    spec = loop_spec(grid, 10, 10, 24.0).model_copy(update={"via_category": "water"})
+    assert generate(grid_engine, spec) == []
+
+
+def test_p2p_via_water_detours_to_the_lake(grid, lake_engine):
+    # Through the lake the trip is 16 to 20 km, against 8 km direct.
+    spec = p2p_spec(grid, LengthKm.around(18)).model_copy(update={"via_category": "water"})
+    candidates = generate(lake_engine, spec)
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert_sound(lake_engine, candidate.path.arcs, node(2, 10), node(18, 10))
+        assert lake_engine.at_water[lake_engine.arc_head[candidate.path.arcs]].any()
