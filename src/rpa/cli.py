@@ -149,3 +149,39 @@ def route_command(
         label = f"{path.length_m / 1000:.1f} км · avoid_major={avoid_major:g} · {surface}"
         render_map([path], [label], html)
         typer.echo(f"Карта: {html}")
+
+
+@app.command("eval")
+def eval_command(
+    out: Annotated[Path, typer.Option(help="Куда записать HTML-страницу")] = Path("out/eval.html"),
+    graph_dir: Annotated[Path | None, typer.Option("--graph", help="Каталог графа")] = None,
+    only: Annotated[list[str] | None, typer.Option(help="Имена кейсов; по умолчанию все")] = None,
+) -> None:
+    """Прогнать эталонные запросы и собрать страницу для оценки качества маршрутов."""
+    # Imported here: route generation is not needed by the other commands.
+    from rpa.eval.cases import CASES
+    from rpa.eval.run import run_case
+    from rpa.routing.engine import Engine
+    from rpa.viz.eval_page import render_eval
+
+    directory = graph_dir or config.current_graph_dir()
+    if not (directory / "meta.json").exists():
+        typer.echo(f"Граф не найден в {directory}. Сначала соберите его: rpa build-graph <файл.pbf>", err=True)
+        raise typer.Exit(1)
+    cases = [case for case in CASES if not only or case.name in only]
+    if not cases:
+        raise typer.BadParameter(f"нет таких кейсов; доступны: {', '.join(case.name for case in CASES)}")
+
+    engine = Engine(load_graph(directory)[0])
+    results = []
+    for case in cases:
+        result = run_case(engine, case)
+        results.append(result)
+        lengths = ", ".join(f"{c.path.length_m / 1000:.0f}" for c in result.candidates) or "—"
+        repeats = max((c.features.repeat_share for c in result.candidates), default=0.0)
+        verdict = "ok" if not result.problems else "ПРОБЛЕМА: " + "; ".join(result.problems)
+        typer.echo(f"{case.name:20} {result.seconds:5.1f} с  км: {lengths:14} повторы до {repeats:4.0%}  {verdict}")
+    render_eval(results, out)
+    typer.echo(f"Страница: {out}")
+    if any(result.problems for result in results):
+        raise typer.Exit(1)
