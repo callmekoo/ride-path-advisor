@@ -65,3 +65,8 @@ def region_pbf() -> Path:
 def db_file() -> Path:
     """Saved places and recent route requests."""
     return data_dir() / "rpa.sqlite"
+
+
+def gazetteer_file() -> Path:
+    """Named places for the current graph's region."""
+    return current_graph_dir() / "gazetteer.sqlite"

@@ -119,3 +119,12 @@ def test_serve_starts_the_api_on_the_built_graph(data_dir, monkeypatch):
     assert (started["host"], started["port"]) == ("127.0.0.1", 8123)
     assert {"/api/route", "/api/meta", "/api/places"} <= {route.path for route in started["app"].routes}
     assert (data_dir / "rpa.sqlite").exists()
+
+
+def test_gazetteer_indexes_named_places_of_the_map(data_dir):
+    result = runner.invoke(app, ["gazetteer", str(MICRO), "--find", "озеро Тихое", "--find", "Нигденет"])
+
+    assert result.exit_code == 0, result.output
+    assert "Мест:" in result.output and "озеро Тихое: Тихое (озеро)" in result.output
+    assert "Нигденет: ничего" in result.output
+    assert (data_dir / "graph" / "current" / "gazetteer.sqlite").exists()

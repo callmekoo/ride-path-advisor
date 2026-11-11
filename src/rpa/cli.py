@@ -1,6 +1,7 @@
 """Command line interface: `rpa fetch-region`, `rpa build-graph`, `rpa route`."""
 
 import hashlib
+from collections import Counter
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -354,3 +355,28 @@ def serve_command(
     engine = load_engine(directory)
     typer.echo(f"Граф: {engine.g.n_nodes} узлов, {engine.g.n_edges} рёбер. Адрес: http://{host}:{port}")
     uvicorn.run(create_app(engine, config.db_file()), host=host, port=port)
+
+
+@app.command("gazetteer")
+def gazetteer_command(
+    pbf: Annotated[Path | None, typer.Argument(help="Файл OSM; по умолчанию выгрузка региона")] = None,
+    graph_dir: Annotated[Path | None, typer.Option("--graph", help="Каталог графа")] = None,
+    find: Annotated[list[str] | None, typer.Option(help="Проверить поиск: показать найденное по названию")] = None,
+) -> None:
+    """Собрать указатель названий (города, станции, озёра, реки, вершины) для разбора запросов."""
+    from rpa.osm.gazetteer import GAZETTEER_FILE, Gazetteer, build_gazetteer, describe, read_places
+
+    directory = graph_dir or config.current_graph_dir()
+    source = pbf or config.region_pbf()
+    if not directory.exists() or not source.exists():
+        typer.echo(f"Нужны граф ({directory}) и файл OSM ({source}): rpa fetch-region, rpa build-graph.", err=True)
+        raise typer.Exit(1)
+    places = read_places(source)
+    build_gazetteer(places, directory / GAZETTEER_FILE)
+    kinds = ", ".join(f"{kind} {count}" for kind, count in Counter(place.kind for place in places).most_common())
+    typer.echo(f"Мест: {len(places)} ({kinds})")
+    gazetteer = Gazetteer(directory / GAZETTEER_FILE)
+    for query in find or []:
+        hits = gazetteer.search(query)
+        found = "; ".join(f"{describe(hit.place)}{'' if hit.exact else ' ~'}" for hit in hits) or "ничего"
+        typer.echo(f"  {query}: {found}")
