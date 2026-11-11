@@ -1,14 +1,18 @@
-"""The HTTP API: routes for a RouteSpec, GPX export, saved places.
+"""The HTTP API: routes for a RouteSpec, GPX export, saved places and routes; and the web page, if built.
 
 Handlers are plain functions, so FastAPI runs them in its thread pool; the search
 kernel releases the GIL, which lets requests overlap.
 """
 
+import json
 from dataclasses import asdict
+from functools import cache
 from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Response
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from rpa.api.db import Db, DuplicateName
 from rpa.api.schemas import (
@@ -23,6 +27,9 @@ from rpa.api.schemas import (
     PlaceOut,
     Profile,
     RouteResponse,
+    SavedRoute,
+    SavedRouteFull,
+    SaveRoute,
 )
 from rpa.nlu.client import LlmClient, LlmError
 from rpa.nlu.prompt import ParsedRequest, describe, messages
@@ -33,6 +40,7 @@ from rpa.routing.generate import generate
 from rpa.routing.gpx import to_gpx
 from rpa.routing.score import Candidate
 from rpa.routing.spec import Point, RouteSpec
+from rpa.viz.heat_page import ridden_roads
 
 # Beyond FAR_SNAP_M a snapped point probably is not where the user meant; beyond
 # MAX_SNAP_M it is off the map and a route from the nearest road would mislead.
@@ -44,13 +52,21 @@ _NO_WATER_DATA = "В графе нет данных о воде: выполни�
 _NOTHING_FOUND = "Не удалось построить маршрут с такими условиями. Попробуйте другую длину или более мягкие ограничения."
 
 
+_NO_RIDES = "Истории заездов нет: импортируйте треки (rpa import-tracks, rpa match)."
+_NO_SUCH_ROUTE = "Такого сохранённого маршрута нет."
 _NO_LLM = "Разбор текста не настроен: задайте LLM_BASE_URL, LLM_MODEL и LLM_API_KEY (см. .env.example)."
 
 
 def create_app(
-    engine: Engine, db_path: Path, gazetteer: Gazetteer | None = None, llm: LlmClient | None = None
+    engine: Engine,
+    db_path: Path,
+    gazetteer: Gazetteer | None = None,
+    llm: LlmClient | None = None,
+    static_dir: Path | None = None,
 ) -> FastAPI:
+    """The application; `static_dir` is the built web page, served from the root when it is there."""
     app = FastAPI(title="ride-path-advisor")
+    app.add_middleware(GZipMiddleware, minimum_size=2000)
     db = Db(db_path)
     meta = _meta(engine).model_copy(update={"has_gazetteer": gazetteer is not None, "has_llm": llm is not None})
 
@@ -123,13 +139,53 @@ def create_app(
         stored = db.candidate(candidate_id)
         if stored is None:
             raise HTTPException(404, "Маршрут не найден: возможно, он устарел. Постройте его заново.")
-        body = CandidateBody.model_validate_json(stored)
-        profile = body.profile and (np.array(body.profile.distance_m), np.array(body.profile.elevation_m))
-        return Response(
-            to_gpx(np.array(body.geometry.coordinates).reshape(-1, 2), body.title, profile),
-            media_type="application/gpx+xml",
-            headers={"Content-Disposition": f'attachment; filename="route-{candidate_id}.gpx"'},
+        return _gpx(CandidateBody.model_validate_json(stored), None, f"route-{candidate_id}")
+
+    @app.post("/api/routes", status_code=201)
+    def post_saved_route(wanted: SaveRoute) -> SavedRoute:
+        saved = db.save_route(wanted.candidate_id, wanted.name)
+        if saved is None:
+            raise HTTPException(404, "Маршрут не найден: возможно, он устарел. Постройте его заново.")
+        return saved
+
+    @app.get("/api/routes")
+    def get_saved_routes() -> list[SavedRoute]:
+        return db.routes()
+
+    @app.get("/api/routes/{route_id}.gpx")  # before the plain id, which would swallow "5.gpx"
+    def get_saved_gpx(route_id: int) -> Response:
+        saved = db.route(route_id)
+        if saved is None:
+            raise HTTPException(404, _NO_SUCH_ROUTE)
+        return _gpx(CandidateBody.model_validate_json(saved["body"]), saved["name"], f"saved-{route_id}")
+
+    @app.get("/api/routes/{route_id}")
+    def get_saved_route(route_id: int) -> SavedRouteFull:
+        saved = db.route(route_id)
+        if saved is None:
+            raise HTTPException(404, _NO_SUCH_ROUTE)
+        return SavedRouteFull(
+            **{key: saved[key] for key in ("id", "name", "created", "length_km", "ascent_m")},
+            spec=RouteSpec.model_validate_json(saved["spec"]),
+            candidate=CandidateBody.model_validate_json(saved["body"]),
         )
+
+    @app.delete("/api/routes/{route_id}", status_code=204)
+    def delete_saved_route(route_id: int) -> None:
+        if not db.delete_route(route_id):
+            raise HTTPException(404, _NO_SUCH_ROUTE)
+
+    @cache
+    def heatmap_json() -> bytes:
+        # A few megabytes for a rider's whole history: built on first use, then kept.
+        return json.dumps(ridden_roads(engine.g, engine.rides), separators=(",", ":")).encode()
+
+    @app.get("/api/heatmap")
+    def get_heatmap() -> Response:
+        """Roads from the ride history as GeoJSON: one MultiLineString per level of use."""
+        if engine.rides is None:
+            raise HTTPException(404, _NO_RIDES)
+        return Response(heatmap_json(), media_type="application/geo+json")
 
     @app.get("/api/places")
     def get_places() -> list[PlaceOut]:
@@ -157,7 +213,18 @@ def create_app(
         if not db.delete_place(place_id):
             raise HTTPException(404, "Такого места нет.")
 
+    if static_dir is not None and (static_dir / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=static_dir, html=True))
     return app
+
+
+def _gpx(body: CandidateBody, name: str | None, file_name: str) -> Response:
+    profile = body.profile and (np.array(body.profile.distance_m), np.array(body.profile.elevation_m))
+    return Response(
+        to_gpx(np.array(body.geometry.coordinates).reshape(-1, 2), name or body.title, profile),
+        media_type="application/gpx+xml",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}.gpx"'},
+    )
 
 
 def _meta(engine: Engine) -> Meta:

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from rpa.api.db import KEEP_REQUESTS, Db, DuplicateName
@@ -93,3 +95,38 @@ def test_data_survives_reopening(tmp_path):
 
     assert Db(path).default_place()["name"] == "дом"
     assert Db(path).candidate(ids[0]) == "a"
+
+
+def body(title: str, km: float, ascent: float | None = None) -> str:
+    return json.dumps({"title": title, "length_km": km, "ascent_m": ascent})
+
+
+def test_a_saved_route_keeps_the_candidate_and_its_request(db):
+    _, ids = db.save_request('{"shape": "loop"}', [body("Кольцо 45 км", 45.2, 310), body("Кольцо 44 км", 44.0)])
+
+    saved = db.save_route(ids[0], "вокруг озера")
+    untitled = db.save_route(ids[1])
+
+    assert saved == {"id": saved["id"], "name": "вокруг озера", "created": saved["created"], "length_km": 45.2, "ascent_m": 310}
+    assert (untitled["name"], untitled["ascent_m"]) == ("Кольцо 44 км", None)
+    assert db.route(saved["id"]) == saved | {"spec": '{"shape": "loop"}', "body": body("Кольцо 45 км", 45.2, 310)}
+    assert db.save_route(10_000) is None and db.route(10_000) is None
+
+
+def test_saved_routes_outlive_their_requests(db):
+    _, ids = db.save_request("{}", [body("Кольцо", 45.0)])
+    saved = db.save_route(ids[0])
+    for _ in range(KEEP_REQUESTS):
+        db.save_request("{}", [])
+
+    assert db.candidate(ids[0]) is None
+    assert db.route(saved["id"])["body"] == body("Кольцо", 45.0)
+
+
+def test_saved_routes_are_listed_newest_first_and_can_be_deleted(db):
+    _, ids = db.save_request("{}", [body("первый", 10.0), body("второй", 20.0)])
+    first, second = db.save_route(ids[0]), db.save_route(ids[1])
+
+    assert db.routes() == [second, first]
+    assert db.delete_route(first["id"]) and not db.delete_route(first["id"])
+    assert db.routes() == [second]

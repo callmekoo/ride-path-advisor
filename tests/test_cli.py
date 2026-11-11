@@ -113,12 +113,32 @@ def test_serve_starts_the_api_on_the_built_graph(data_dir, monkeypatch):
 
     started = {}
     monkeypatch.setattr(uvicorn, "run", lambda application, **options: started.update(app=application, **options))
+    monkeypatch.chdir(data_dir)  # away from the developer's .env
+    monkeypatch.setenv("RPA_WEB_DIR", str(data_dir / "no-page"))
     result = runner.invoke(app, ["serve", "--port", "8123"])
 
     assert result.exit_code == 0, result.output
     assert (started["host"], started["port"]) == ("127.0.0.1", 8123)
     assert {"/api/route", "/api/meta", "/api/places"} <= {route.path for route in started["app"].routes}
     assert (data_dir / "rpa.sqlite").exists()
+    assert "Интерфейс: не собран" in result.output
+
+
+def test_serve_hands_out_the_built_page(data_dir, tmp_path, monkeypatch):
+    import uvicorn
+
+    site = tmp_path / "dist"
+    site.mkdir()
+    (site / "index.html").write_text("<title>rpa</title>")
+    monkeypatch.setenv("RPA_WEB_DIR", str(site))
+    monkeypatch.chdir(data_dir)  # away from the developer's .env
+    started = {}
+    monkeypatch.setattr(uvicorn, "run", lambda application, **options: started.update(app=application, **options))
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 0, result.output
+    assert "Интерфейс: http://127.0.0.1:8000/" in result.output
+    assert "" in {getattr(route, "path", None) for route in started["app"].routes}
 
 
 def test_gazetteer_indexes_named_places_of_the_map(data_dir):

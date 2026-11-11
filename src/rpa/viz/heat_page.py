@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from rpa.graph.store import GraphData
+from rpa.graph.store import COORD_SCALE, GraphData
 
 # (fewest rides, colour, legend label), from rarely to often ridden.
 _BUCKETS = [(1, "#4575b4", "1"), (2, "#74add1", "2–4"), (5, "#fdae61", "5–14"), (15, "#f46d43", "15–49"), (50, "#a50026", "50+")]
@@ -55,23 +55,35 @@ map.on("load", () => {
 """
 
 
-def render_heatmap(g: GraphData, rides: np.ndarray, out: Path) -> None:
-    """Write an HTML map of all edges with at least one ride."""
+def ridden_roads(g: GraphData, rides: np.ndarray) -> dict:
+    """Every edge with at least one ride as GeoJSON: one MultiLineString per level of use, `bbox` around them all."""
     features = []
-    for i, (low, colour, label) in enumerate(_BUCKETS):
-        high = _BUCKETS[i + 1][0] if i + 1 < len(_BUCKETS) else np.inf
+    for level, (low, _, label) in enumerate(_BUCKETS):
+        high = _BUCKETS[level + 1][0] if level + 1 < len(_BUCKETS) else np.inf
         edges = np.flatnonzero((rides >= low) & (rides < high))
         lines = [np.round(g.edge_geometry(int(e)), 5).tolist() for e in edges]
         features.append(
             {
                 "type": "Feature",
-                "properties": {"colour": colour, "label": label},
+                "properties": {"level": level, "label": label},
                 "geometry": {"type": "MultiLineString", "coordinates": lines},
             }
         )
-    ridden = np.asarray(g.node_lonlat)[np.unique(np.asarray(g.edge_u)[rides > 0])]
-    low, high = (ridden.min(axis=0), ridden.max(axis=0)) if len(ridden) else (np.zeros(2), np.zeros(2))
-    data = {"features": features, "bounds": [low.tolist(), high.tolist()]}
+    geom_off = np.asarray(g.geom_off)
+    ridden = np.flatnonzero(rides > 0)
+    points = np.concatenate([np.arange(geom_off[e], geom_off[e + 1]) for e in ridden]) if len(ridden) else []
+    corners = np.asarray(g.geom_xy)[points] / COORD_SCALE if len(ridden) else np.zeros((1, 2))
+    bbox = [*corners.min(axis=0).tolist(), *corners.max(axis=0).tolist()]
+    return {"type": "FeatureCollection", "bbox": bbox, "features": features}
+
+
+def render_heatmap(g: GraphData, rides: np.ndarray, out: Path) -> None:
+    """Write an HTML map of all edges with at least one ride."""
+    roads = ridden_roads(g, rides)
+    for feature, (_, colour, _) in zip(roads["features"], _BUCKETS):
+        feature["properties"]["colour"] = colour
+    west, south, east, north = roads["bbox"]
+    data = {"features": roads["features"], "bounds": [[west, south], [east, north]]}
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(_PAGE.replace("__DATA__", json.dumps(data)), encoding="utf-8")

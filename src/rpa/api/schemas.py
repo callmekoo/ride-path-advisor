@@ -67,6 +67,24 @@ class CandidateOut(CandidateBody):
     id: int
 
 
+class SaveRoute(BaseModel):
+    candidate_id: int
+    name: PlaceName | None = None  # the candidate's title by default
+
+
+class SavedRoute(BaseModel):
+    id: int
+    name: str
+    created: str  # UTC, "YYYY-MM-DD HH:MM:SS"
+    length_km: float
+    ascent_m: float | None
+
+
+class SavedRouteFull(SavedRoute):
+    spec: RouteSpec
+    candidate: CandidateBody
+
+
 class RouteResponse(BaseModel):
     request_id: int
     spec: RouteSpec

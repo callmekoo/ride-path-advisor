@@ -70,3 +70,9 @@ def db_file() -> Path:
 def gazetteer_file() -> Path:
     """Named places for the current graph's region."""
     return current_graph_dir() / "gazetteer.sqlite"
+
+
+def web_dist() -> Path:
+    """The built web page (`npm run build` in web/); override with RPA_WEB_DIR."""
+    default = Path(__file__).resolve().parents[2] / "web" / "dist"
+    return Path(os.environ.get("RPA_WEB_DIR", default))

@@ -280,3 +280,105 @@ def test_parse_failures_are_explained(grid_engine, grid, tmp_path):
     no_llm = TestClient(create_app(grid_engine, tmp_path / "other.sqlite"))
     response = no_llm.post("/api/parse", json={"text": "кольцо 8 км"})
     assert response.status_code == 503 and "LLM_API_KEY" in response.json()["detail"]
+
+
+# Saved routes
+
+
+def test_a_candidate_can_be_saved_opened_exported_and_removed(client, grid):
+    answer = client.post("/api/route", json=loop(grid)).json()
+    first, second = answer["candidates"][:2]
+
+    saved = client.post("/api/routes", json={"candidate_id": first["id"], "name": " вокруг квартала "})
+    assert saved.status_code == 201
+    assert saved.json() == {
+        "id": saved.json()["id"],
+        "name": "вокруг квартала",
+        "created": saved.json()["created"],
+        "length_km": first["length_km"],
+        "ascent_m": None,
+    }
+    untitled = client.post("/api/routes", json={"candidate_id": second["id"]}).json()
+    assert untitled["name"] == second["title"]
+    assert client.get("/api/routes").json() == [untitled, saved.json()]
+
+    opened = client.get(f"/api/routes/{untitled['id']}").json()
+    assert opened["spec"] == answer["spec"]
+    assert opened["candidate"] == {key: value for key, value in second.items() if key != "id"}
+
+    gpx = client.get(f"/api/routes/{untitled['id']}.gpx")
+    assert gpx.headers["content-type"].startswith("application/gpx+xml")
+    assert len(ET.fromstring(gpx.text).findall(GPX_POINT)) == len(second["geometry"]["coordinates"])
+
+    assert client.delete(f"/api/routes/{untitled['id']}").status_code == 204
+    assert client.get("/api/routes").json() == [saved.json()]
+
+
+def test_saved_route_errors(client):
+    assert client.post("/api/routes", json={"candidate_id": 12345}).status_code == 404
+    assert client.post("/api/routes", json={"candidate_id": 1, "name": "  "}).status_code == 422
+    assert client.get("/api/routes/12345").status_code == 404
+    assert client.get("/api/routes/12345.gpx").status_code == 404
+    assert client.delete("/api/routes/12345").status_code == 404
+
+
+# Ridden roads
+
+
+def test_ridden_roads_come_in_levels(grid, tmp_path):
+    rides = np.zeros(grid.n_edges, dtype=np.uint16)
+    rides[[0, 1]], rides[2], rides[3], rides[4:] = 1, 4, 60, 7
+    client = TestClient(create_app(Engine(grid, rides), tmp_path / "rpa.sqlite"))
+
+    answer = client.get("/api/heatmap")
+    roads = answer.json()
+
+    assert answer.headers["content-encoding"] == "gzip"
+    assert roads["type"] == "FeatureCollection"
+    assert [(f["properties"]["level"], f["properties"]["label"]) for f in roads["features"]] == [
+        (0, "1"),
+        (1, "2–4"),
+        (2, "5–14"),
+        (3, "15–49"),
+        (4, "50+"),
+    ]
+    assert [len(f["geometry"]["coordinates"]) for f in roads["features"]] == [2, 1, grid.n_edges - 4, 0, 1]
+    assert roads["features"][1]["geometry"]["coordinates"][0] == np.round(grid.edge_geometry(2), 5).tolist()
+    lonlat = np.asarray(grid.node_lonlat)
+    assert roads["bbox"] == pytest.approx([*lonlat.min(axis=0), *lonlat.max(axis=0)], abs=1e-6)
+
+
+def test_only_ridden_roads_are_framed(grid, tmp_path):
+    rides = np.zeros(grid.n_edges, dtype=np.uint16)
+    rides[3] = 2
+    client = TestClient(create_app(Engine(grid, rides), tmp_path / "rpa.sqlite"))
+
+    ridden = grid.edge_geometry(3)
+    assert client.get("/api/heatmap").json()["bbox"] == pytest.approx([*ridden.min(axis=0), *ridden.max(axis=0)], abs=1e-6)
+
+
+def test_no_ride_history_means_no_ridden_roads(client):
+    assert client.get("/api/heatmap").status_code == 404
+
+
+# The web page
+
+
+def test_the_built_page_is_served_next_to_the_api(grid_engine, tmp_path):
+    site = tmp_path / "dist"
+    (site / "assets").mkdir(parents=True)
+    (site / "index.html").write_text("<!doctype html><title>Маршруты</title>", encoding="utf-8")
+    (site / "assets" / "app.js").write_text("console.log(1)")
+    client = TestClient(create_app(grid_engine, tmp_path / "rpa.sqlite", static_dir=site))
+
+    assert "Маршруты" in client.get("/").text
+    assert client.get("/assets/app.js").text == "console.log(1)"
+    assert client.get("/api/meta").json()["nodes"] > 0
+    assert client.get("/api/nothing").status_code == 404
+
+
+def test_without_a_built_page_there_is_only_the_api(grid_engine, tmp_path):
+    for static_dir in (None, tmp_path / "missing"):
+        client = TestClient(create_app(grid_engine, tmp_path / "rpa.sqlite", static_dir=static_dir))
+        assert client.get("/").status_code == 404
+        assert client.get("/api/meta").status_code == 200

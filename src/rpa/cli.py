@@ -342,7 +342,7 @@ def serve_command(
     port: Annotated[int, typer.Option(min=1, max=65535)] = 8000,
     graph_dir: Annotated[Path | None, typer.Option("--graph", help="Каталог графа")] = None,
 ) -> None:
-    """Запустить веб-сервис: маршруты по запросу, GPX, сохранённые места."""
+    """Запустить веб-сервис: страница с картой, маршруты по запросу, GPX, сохранённые места и маршруты."""
     import uvicorn
 
     from rpa.api.app import create_app
@@ -365,7 +365,13 @@ def serve_command(
         else "Разбор текста: не настроен (LLM_BASE_URL, LLM_MODEL, LLM_API_KEY в окружении или .env)"
     )
     llm = LlmClient(settings) if settings else None
-    uvicorn.run(create_app(engine, config.db_file(), gazetteer, llm), host=host, port=port)
+    page = config.web_dist()
+    typer.echo(
+        f"Интерфейс: http://{host}:{port}/"
+        if (page / "index.html").is_file()
+        else f"Интерфейс: не собран ({page}); выполните npm install && npm run build в каталоге web"
+    )
+    uvicorn.run(create_app(engine, config.db_file(), gazetteer, llm, page), host=host, port=port)
 
 
 @app.command("gazetteer")

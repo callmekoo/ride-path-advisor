@@ -1,8 +1,9 @@
-"""What the service remembers between requests: saved places and recent route requests.
+"""What the service remembers between requests: saved places, recent route requests, saved routes.
 
 One small SQLite file. Recent requests are kept so that a GPX link still works after
 a restart and so that a follow-up ("shorter", "not through that town") can see what
-was asked and offered before.
+was asked and offered before. A route the rider saves is copied out of them, so it
+stays when its request is dropped.
 """
 
 import sqlite3
@@ -32,9 +33,17 @@ CREATE TABLE IF NOT EXISTS candidates (
     body TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS candidates_by_request ON candidates(request_id);
+CREATE TABLE IF NOT EXISTS routes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    name TEXT NOT NULL,
+    spec TEXT NOT NULL,
+    body TEXT NOT NULL  -- the candidate as JSON
+);
 """
 
 _PLACE_COLUMNS = "id, name, lon, lat, is_default"
+_ROUTE_COLUMNS = "id, name, created, json_extract(body, '$.length_km'), json_extract(body, '$.ascent_m')"
 
 
 class DuplicateName(Exception):
@@ -43,6 +52,10 @@ class DuplicateName(Exception):
 
 def _place(row: tuple) -> dict:
     return {"id": row[0], "name": row[1], "lon": row[2], "lat": row[3], "is_default": bool(row[4])}
+
+
+def _route(row: tuple) -> dict:
+    return {"id": row[0], "name": row[1], "created": row[2], "length_km": row[3], "ascent_m": row[4]}
 
 
 class Db:
@@ -148,6 +161,37 @@ class Db:
                 return None
             bodies = connection.execute("SELECT body FROM candidates WHERE request_id = ? ORDER BY id", (request_id,))
             return {"spec": row[0], "candidates": [body for (body,) in bodies]}
+
+    # Saved routes
+
+    def save_route(self, candidate_id: int, name: str | None = None) -> dict | None:
+        """Keep a copy of a candidate and its request; None if the candidate is gone. Named by its title by default."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO routes (name, spec, body) "
+                "SELECT COALESCE(?, json_extract(c.body, '$.title')), r.spec, c.body "
+                "FROM candidates c JOIN requests r ON r.id = c.request_id WHERE c.id = ?",
+                (name, candidate_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(f"SELECT {_ROUTE_COLUMNS} FROM routes WHERE id = ?", (cursor.lastrowid,))
+            return _route(row.fetchone())
+
+    def routes(self) -> list[dict]:
+        """Saved routes without their bodies, newest first."""
+        with self._connect() as connection:
+            return [_route(row) for row in connection.execute(f"SELECT {_ROUTE_COLUMNS} FROM routes ORDER BY id DESC")]
+
+    def route(self, route_id: int) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(f"SELECT {_ROUTE_COLUMNS}, spec, body FROM routes WHERE id = ?", (route_id,))
+            row = row.fetchone()
+        return _route(row) | {"spec": row[5], "body": row[6]} if row else None
+
+    def delete_route(self, route_id: int) -> bool:
+        with self._connect() as connection:
+            return connection.execute("DELETE FROM routes WHERE id = ?", (route_id,)).rowcount > 0
 
 
 def _read_place(connection: sqlite3.Connection, place_id: int) -> dict | None:
