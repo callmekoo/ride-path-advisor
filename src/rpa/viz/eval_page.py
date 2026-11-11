@@ -39,7 +39,7 @@ _PAGE = """<!doctype html>
 <div id="map"></div>
 <script>
 const results = __RESULTS__;
-const columns = ["", "км", "Δ длины", "повторы", "цена", "поворотов/10 км", "крупные", "грунт", "оценка"];
+const columns = ["", "км", "Δ длины", "повторы", "цена", "поворотов/10 км", "крупные", "грунт", "знакомо", "оценка"];
 const map = new maplibregl.Map({
   container: "map",
   style: "https://tiles.openfreemap.org/styles/liberty",
@@ -125,6 +125,7 @@ def _result_json(result: CaseResult) -> dict:
                     f"{f.turns_per_10km:.0f}",
                     f"{f.major_share:.0%}",
                     f"{f.unpaved_share:.0%}",
+                    f"{f.ridden_share:.0%}",
                     f"{candidate.score:.0f}",
                 ],
             }

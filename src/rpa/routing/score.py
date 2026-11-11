@@ -31,6 +31,7 @@ class Features:
     turns_per_10km: float
     major_share: float  # secondary, primary and trunk roads
     unpaved_share: float  # likely unpaved, unpaved and bad surfaces
+    ridden_share: float = 0.0  # roads present in the ride history; 0 when there is none
 
 
 @dataclass
@@ -53,6 +54,7 @@ def features(engine: Engine, w: np.ndarray, arcs: np.ndarray, length: LengthKm |
     repeat_m = float((engine.length[used].astype(np.float64) * (times - 1)).sum())
     highway = np.asarray(engine.g.edge_highway)[edges]
     surface = np.asarray(engine.g.edge_surface)[edges]
+    ridden_m = float(edge_m[engine.rides[edges] > 0].sum()) if engine.rides is not None else 0.0
     return Features(
         length_m=total,
         length_error=abs(total / 1000 - length.target) / length.target if length else 0.0,
@@ -61,6 +63,7 @@ def features(engine: Engine, w: np.ndarray, arcs: np.ndarray, length: LengthKm |
         turns_per_10km=_count_turns(engine, arcs) / (total / 10_000),
         major_share=float(edge_m[np.isin(highway, _MAJOR)].sum()) / total,
         unpaved_share=float(edge_m[np.isin(surface, _UNPAVED)].sum()) / total,
+        ridden_share=ridden_m / total,
     )
 
 

@@ -1,6 +1,6 @@
 """Turn riding preferences into one weight per arc.
 
-    w = length * (1 + m * road_class_penalty) * surface_factor * restriction_factor
+    w = length * (1 + m * road_class_penalty + f * unfamiliarity) * surface_factor * restriction_factor
 
 Every factor is at least 1, so a finite weight never undercuts the edge
 length. The kernel's A* heuristic depends on that. Forbidden arcs get +inf.
@@ -44,6 +44,12 @@ _SURFACE_FACTOR = {
 }
 
 SOFT_RESTRICTION_FACTOR = 3.0
+# Having actually ridden a restricted way this many times shows it is passable.
+RIDES_LIFTING_RESTRICTION = 2
+# Extra metres per metre on a never-ridden road at familiarity = 1.
+UNFAMILIAR_PENALTY = 1.5
+# This many rides make a road fully familiar; fewer count on a log scale.
+FULLY_FAMILIAR_RIDES = 30
 FORD_FACTOR = 1.5
 MAX_MULTIPLIER = 50.0
 
@@ -58,18 +64,32 @@ class Prefs(BaseModel):
 
     avoid_major: float = Field(default=0.5, ge=0.0, le=1.0)  # 0 = big roads are fine, 1 = avoid them hard
     surface: Literal["any", "paved", "prefer_unpaved"] = "any"
+    familiarity: float = Field(default=0.4, ge=0.0, le=1.0)  # 0 = ignore ride history, 1 = stick to ridden roads
 
 
-def arc_weights(g: GraphData, prefs: Prefs) -> np.ndarray:
-    """Weights for the kernel: f32[2E], arc 2e runs u -> v and arc 2e + 1 runs v -> u."""
+def popularity(rides: np.ndarray) -> np.ndarray:
+    """Ride counts on a 0..1 scale: 0 = never ridden, 1 = ridden FULLY_FAMILIAR_RIDES times or more."""
+    return np.minimum(1.0, np.log1p(rides) / np.log1p(FULLY_FAMILIAR_RIDES))
+
+
+def arc_weights(g: GraphData, prefs: Prefs, rides: np.ndarray | None = None) -> np.ndarray:
+    """Weights for the kernel: f32[2E], arc 2e runs u -> v and arc 2e + 1 runs v -> u.
+
+    `rides` (per edge, how many recorded rides used it) enables the familiarity
+    preference; without it every road counts as equally unknown.
+    """
     flags = np.asarray(g.edge_flags)
     major_scale = 0.3 + 1.7 * prefs.avoid_major
     class_penalty = _PENALTY_BY_CLASS[g.edge_highway]
     class_penalty = np.where(flags & CYCLE_INFRA, class_penalty / 2, class_penalty)
 
     multiplier = 1.0 + major_scale * class_penalty
+    restricted = (flags & SOFT_RESTRICTED) > 0
+    if rides is not None:
+        multiplier = multiplier + UNFAMILIAR_PENALTY * prefs.familiarity * (1.0 - popularity(rides))
+        restricted &= rides < RIDES_LIFTING_RESTRICTION
     multiplier = multiplier * np.array(_SURFACE_FACTOR[prefs.surface])[g.edge_surface]
-    multiplier = multiplier * np.where(flags & SOFT_RESTRICTED, SOFT_RESTRICTION_FACTOR, 1.0)
+    multiplier = multiplier * np.where(restricted, SOFT_RESTRICTION_FACTOR, 1.0)
     multiplier = multiplier * np.where(flags & FORD, FORD_FACTOR, 1.0)
     # The cap keeps penalties from compounding into a de-facto ban; real bans stay infinite.
     multiplier = np.where(np.isfinite(multiplier), np.minimum(multiplier, MAX_MULTIPLIER), _INF)

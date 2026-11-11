@@ -112,3 +112,36 @@ def test_avoid_major_out_of_range_is_rejected(value):
 def test_unknown_surface_mode_is_rejected():
     with pytest.raises(ValueError):
         Prefs(surface="gravel")
+
+
+def test_familiarity_makes_unridden_roads_dearer(micro):
+    e = edge_index(micro, 1, 3)
+    plain = with_edge(micro, e, edge_highway=Highway.UNCLASSIFIED, edge_surface=Surface.PAVED)
+    rides = np.zeros(micro.n_edges, dtype=np.uint16)
+    prefs = Prefs(avoid_major=0.0, familiarity=1.0)
+
+    def at(count: int) -> float:
+        rides[e] = count
+        return float(arc_weights(plain, prefs, rides)[2 * e]) / float(plain.edge_len_m[e])
+
+    assert at(0) == pytest.approx(2.5)
+    assert at(30) == pytest.approx(1.0)
+    assert at(1000) == pytest.approx(1.0)
+    assert at(0) > at(1) > at(5) > at(30)
+
+
+def test_familiarity_zero_or_no_history_changes_nothing(micro):
+    rides = np.zeros(micro.n_edges, dtype=np.uint16)
+    base = arc_weights(micro, Prefs(familiarity=1.0))
+    np.testing.assert_array_equal(arc_weights(micro, Prefs(familiarity=0.0), rides), base)
+
+
+def test_having_ridden_a_restricted_way_twice_lifts_the_restriction(micro):
+    footway = edge_index(micro, 12, 14)
+    rides = np.zeros(micro.n_edges, dtype=np.uint16)
+    prefs = Prefs(familiarity=0.0)
+    restricted = float(arc_weights(micro, prefs, rides)[2 * footway])
+    rides[footway] = 1
+    assert float(arc_weights(micro, prefs, rides)[2 * footway]) == restricted
+    rides[footway] = 2
+    assert float(arc_weights(micro, prefs, rides)[2 * footway]) == pytest.approx(restricted / 3.0)

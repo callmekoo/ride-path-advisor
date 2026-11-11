@@ -161,7 +161,7 @@ def eval_command(
     # Imported here: route generation is not needed by the other commands.
     from rpa.eval.cases import CASES
     from rpa.eval.run import run_case
-    from rpa.routing.engine import Engine
+    from rpa.routing.engine import load_engine
     from rpa.viz.eval_page import render_eval
 
     directory = graph_dir or config.current_graph_dir()
@@ -172,7 +172,7 @@ def eval_command(
     if not cases:
         raise typer.BadParameter(f"нет таких кейсов; доступны: {', '.join(case.name for case in CASES)}")
 
-    engine = Engine(load_graph(directory)[0])
+    engine = load_engine(directory)
     results = []
     for case in cases:
         result = run_case(engine, case)
