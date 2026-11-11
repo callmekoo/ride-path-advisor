@@ -346,6 +346,8 @@ def serve_command(
     import uvicorn
 
     from rpa.api.app import create_app
+    from rpa.nlu.client import LlmClient, LlmSettings
+    from rpa.osm.gazetteer import GAZETTEER_FILE, Gazetteer
     from rpa.routing.engine import load_engine
 
     directory = graph_dir or config.current_graph_dir()
@@ -353,8 +355,17 @@ def serve_command(
         typer.echo(f"Граф не найден в {directory}. Сначала соберите его: rpa build-graph <файл.pbf>", err=True)
         raise typer.Exit(1)
     engine = load_engine(directory)
+    gazetteer = Gazetteer(directory / GAZETTEER_FILE) if (directory / GAZETTEER_FILE).exists() else None
+    settings = LlmSettings.from_env()
     typer.echo(f"Граф: {engine.g.n_nodes} узлов, {engine.g.n_edges} рёбер. Адрес: http://{host}:{port}")
-    uvicorn.run(create_app(engine, config.db_file()), host=host, port=port)
+    typer.echo("Названия мест: " + (f"{len(gazetteer)}" if gazetteer else "нет, выполните rpa gazetteer"))
+    typer.echo(
+        f"Разбор текста: модель {settings.model}" + (" через прокси" if settings.proxy_url else "")
+        if settings
+        else "Разбор текста: не настроен (LLM_BASE_URL, LLM_MODEL, LLM_API_KEY в окружении или .env)"
+    )
+    llm = LlmClient(settings) if settings else None
+    uvicorn.run(create_app(engine, config.db_file(), gazetteer, llm), host=host, port=port)
 
 
 @app.command("gazetteer")

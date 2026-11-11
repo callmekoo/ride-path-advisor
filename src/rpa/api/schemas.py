@@ -4,7 +4,9 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints
 
-from rpa.routing.spec import RouteSpec
+from rpa.nlu.prompt import ParsedRequest
+from rpa.nlu.resolve import Question
+from rpa.routing.spec import Point, RouteSpec
 
 PlaceName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 Lon = Annotated[float, Field(ge=-180, le=180)]
@@ -82,3 +84,20 @@ class Meta(BaseModel):
     ridden_km: float
     has_water: bool
     has_terrain: bool
+    has_gazetteer: bool  # place names can be looked up
+    has_llm: bool  # free-text requests can be parsed
+
+
+class ParseRequest(BaseModel):
+    text: str = Field(default="", max_length=2000)
+    click: Point | None = None  # where the rider put the start marker for this request
+    request_id: int | None = None  # the earlier request that this text refines
+    picks: dict[str, Point] = {}  # answers to questions, keyed by Question.about
+    understood: ParsedRequest | None = None  # resolve this again instead of asking the model
+
+
+class ParseResponse(BaseModel):
+    spec: RouteSpec | None  # ready for POST /api/route
+    question: Question | None  # asked instead of a spec when the rider has to settle something
+    understood: ParsedRequest
+    warnings: list[str]

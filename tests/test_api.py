@@ -35,6 +35,7 @@ def test_meta_describes_the_graph(client, grid):
     assert (west, south) == pytest.approx((60.0, 56.8)) and east > west and north > south
     assert meta["has_rides"] is False and meta["has_water"] is False and meta["has_terrain"] is False
     assert meta["ridden_km"] == 0
+    assert meta["has_gazetteer"] is False and meta["has_llm"] is False
 
 
 def test_loop_request_returns_distinct_closed_candidates(client, grid):
@@ -193,3 +194,89 @@ def test_place_errors(client):
     assert client.post("/api/places", json={"name": "x", "lon": 600.0, "lat": 56.0}).status_code == 422
     assert client.put("/api/places/99", json={"name": "x"}).status_code == 404
     assert client.delete("/api/places/99").status_code == 404
+
+
+# --- free-text requests --------------------------------------------------------
+
+
+class FakeLlm:
+    """Stands in for the model: answers with prepared structures and remembers what it was asked."""
+
+    def __init__(self, *answers) -> None:
+        self.answers = list(answers)
+        self.asked: list[str] = []
+
+    def parse(self, system, user, model):
+        self.asked.append(user)
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return model.model_validate(answer)
+
+
+def text_client(grid_engine, tmp_path, *answers) -> tuple[TestClient, FakeLlm]:
+    from rpa.osm.gazetteer import Gazetteer, Place, build_gazetteer
+
+    grid = grid_engine.g
+    lake = Place("озеро Круглое", "lake", *grid.node_lonlat[16 * 21 + 16].tolist())
+    build_gazetteer([lake, Place("Ревда", "town", *grid.node_lonlat[4 * 21 + 4].tolist())], tmp_path / "places.sqlite")
+    llm = FakeLlm(*answers)
+    client = TestClient(create_app(grid_engine, tmp_path / "rpa.sqlite", Gazetteer(tmp_path / "places.sqlite"), llm))
+    return client, llm
+
+
+def test_text_becomes_a_spec_that_the_router_accepts(grid_engine, grid, tmp_path):
+    client, llm = text_client(grid_engine, tmp_path, {"length_km": 8, "avoid_major": 0.8})
+    assert client.get("/api/meta").json()["has_llm"] is True
+    client.post("/api/places", json={"name": "дом", **at(grid, 10, 10)})
+
+    body = client.post("/api/parse", json={"text": "кольцо 8 км, поменьше больших дорог"}).json()
+
+    assert body["question"] is None and body["warnings"] == []
+    assert body["understood"]["length_km"] == 8 and body["understood"]["start"] is None
+    assert body["spec"]["start"]["label"] == "дом" and body["spec"]["prefs"]["avoid_major"] == 0.8
+    assert llm.asked == ["Сохранённые места: дом\n\nЗапрос: кольцо 8 км, поменьше больших дорог"]
+    assert len(client.post("/api/route", json=body["spec"]).json()["candidates"]) >= 2
+
+
+def test_without_a_start_the_service_asks_and_a_click_answers(grid_engine, grid, tmp_path):
+    client, llm = text_client(grid_engine, tmp_path, {"length_km": 8})
+
+    asked = client.post("/api/parse", json={"text": "кольцо 8 км"}).json()
+    assert asked["spec"] is None and asked["question"]["about"] == "start"
+
+    answered = client.post("/api/parse", json={"understood": asked["understood"], "click": at(grid, 10, 10)}).json()
+    assert answered["spec"]["start"]["lon"] == at(grid, 10, 10)["lon"]
+    assert len(llm.asked) == 1  # the second call resolved what was already understood
+
+
+def test_a_follow_up_shows_the_model_the_previous_request_and_what_was_offered(grid_engine, grid, tmp_path):
+    client, llm = text_client(
+        grid_engine, tmp_path, {"length_km": 16, "via": "озеро Круглое"}, {"length_km": 20, "via": "озеро Круглое"}
+    )
+    first = client.post("/api/parse", json={"text": "16 км до Круглого и обратно", "click": at(grid, 10, 10)}).json()
+    routed = client.post("/api/route", json=first["spec"]).json()
+    assert routed["candidates"][0]["via_label"] == "озеро Круглое"
+
+    second = client.post("/api/parse", json={"text": "подлиннее", "request_id": routed["request_id"]}).json()
+
+    follow_up = llm.asked[1]
+    assert 'Предыдущий запрос: {' in follow_up and '"via":"озеро Круглое"' in follow_up and '"length_km":16.0' in follow_up
+    assert "Предложенные варианты:\n1. Кольцо" in follow_up and "озеро Круглое; лес 0%" in follow_up
+    assert follow_up.endswith("Новая реплика: подлиннее") and "60." not in follow_up
+    assert second["spec"]["length_km"]["target"] == 20
+    assert second["spec"]["start"] == first["spec"]["start"] and second["spec"]["via"] == first["spec"]["via"]
+
+
+def test_parse_failures_are_explained(grid_engine, grid, tmp_path):
+    from rpa.nlu.client import LlmError
+
+    client, _ = text_client(grid_engine, tmp_path, LlmError("Модель недоступна: таймаут"))
+    failed = client.post("/api/parse", json={"text": "кольцо 8 км"})
+    assert failed.status_code == 502 and "таймаут" in failed.json()["detail"]
+    assert client.post("/api/parse", json={"text": "  "}).status_code == 422
+    assert client.post("/api/parse", json={"text": "короче", "request_id": 999}).status_code == 404
+
+    no_llm = TestClient(create_app(grid_engine, tmp_path / "other.sqlite"))
+    response = no_llm.post("/api/parse", json={"text": "кольцо 8 км"})
+    assert response.status_code == 503 and "LLM_API_KEY" in response.json()["detail"]

@@ -16,12 +16,18 @@ from rpa.api.schemas import (
     CandidateOut,
     LineString,
     Meta,
+    ParseRequest,
+    ParseResponse,
     PlaceChange,
     PlaceIn,
     PlaceOut,
     Profile,
     RouteResponse,
 )
+from rpa.nlu.client import LlmClient, LlmError
+from rpa.nlu.prompt import ParsedRequest, describe, messages
+from rpa.nlu.resolve import Context, resolve
+from rpa.osm.gazetteer import Gazetteer
 from rpa.routing.engine import Engine
 from rpa.routing.generate import generate
 from rpa.routing.gpx import to_gpx
@@ -38,10 +44,15 @@ _NO_WATER_DATA = "В графе нет данных о воде: выполни�
 _NOTHING_FOUND = "Не удалось построить маршрут с такими условиями. Попробуйте другую длину или более мягкие ограничения."
 
 
-def create_app(engine: Engine, db_path: Path) -> FastAPI:
+_NO_LLM = "Разбор текста не настроен: задайте LLM_BASE_URL, LLM_MODEL и LLM_API_KEY (см. .env.example)."
+
+
+def create_app(
+    engine: Engine, db_path: Path, gazetteer: Gazetteer | None = None, llm: LlmClient | None = None
+) -> FastAPI:
     app = FastAPI(title="ride-path-advisor")
     db = Db(db_path)
-    meta = _meta(engine)
+    meta = _meta(engine).model_copy(update={"has_gazetteer": gazetteer is not None, "has_llm": llm is not None})
 
     @app.get("/api/meta")
     def get_meta() -> Meta:
@@ -64,6 +75,47 @@ def create_app(engine: Engine, db_path: Path) -> FastAPI:
             candidates=[CandidateOut(id=i, **body.model_dump()) for i, body in zip(ids, bodies)],
             warnings=warnings,
             message=message,
+        )
+
+    @app.post("/api/parse")
+    def post_parse(body: ParseRequest) -> ParseResponse:
+        previous, offered = None, []
+        if body.request_id is not None:
+            stored = db.request(body.request_id)
+            if stored is None:
+                raise HTTPException(404, "Предыдущий запрос не найден: возможно, он устарел. Начните заново.")
+            previous = RouteSpec.model_validate_json(stored["spec"])
+            offered = [CandidateBody.model_validate_json(candidate) for candidate in stored["candidates"]]
+        saved_places = db.places()
+
+        parsed = body.understood
+        if parsed is None:
+            if not body.text.strip():
+                raise HTTPException(422, "Пустой запрос.")
+            if llm is None:
+                raise HTTPException(503, _NO_LLM)
+            lines = [_candidate_line(number, candidate) for number, candidate in enumerate(offered, start=1)]
+            names = [place["name"] for place in saved_places]
+            try:
+                # Only words go to the model: the text, place names and candidate statistics.
+                parsed = llm.parse(
+                    *messages(body.text, describe(previous) if previous else None, lines, names), ParsedRequest
+                )
+            except LlmError as error:
+                raise HTTPException(502, str(error)) from None
+
+        context = Context(
+            snapper=engine.snapper,
+            gazetteer=gazetteer,
+            saved_places=saved_places,
+            click=body.click,
+            previous=previous,
+            previous_candidates=[candidate.geometry.coordinates for candidate in offered],
+            picks=body.picks,
+        )
+        resolved = resolve(parsed, context)
+        return ParseResponse(
+            spec=resolved.spec, question=resolved.question, understood=parsed, warnings=resolved.warnings
         )
 
     @app.get("/api/candidates/{candidate_id}.gpx")
@@ -122,7 +174,21 @@ def _meta(engine: Engine) -> Meta:
         ridden_km=ridden_m / 1000,
         has_water=engine.at_water is not None,
         has_terrain=engine.forest is not None,
+        has_gazetteer=False,
+        has_llm=False,
     )
+
+
+def _candidate_line(number: int, candidate: CandidateBody) -> str:
+    """One offered route in words, for the model to relate a follow-up to."""
+    measured = candidate.features
+    parts = [f"{number}. {candidate.title}"]
+    if candidate.ascent_m is not None:
+        parts.append(f"набор {candidate.ascent_m:.0f} м")
+    parts.append(f"лес {measured.get('forest_share', 0):.0%}")
+    parts.append(f"знакомые дороги {measured.get('ridden_share', 0):.0%}")
+    parts.append(f"крупные дороги {measured.get('major_share', 0):.0%}")
+    return "; ".join(parts)
 
 
 def _check_point(engine: Engine, point: Point, name: str) -> list[str]:
