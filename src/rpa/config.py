@@ -60,3 +60,8 @@ def match_file() -> Path:
 
 def region_pbf() -> Path:
     return osm_dir() / "region.osm.pbf"
+
+
+def db_file() -> Path:
+    """Saved places and recent route requests."""
+    return data_dir() / "rpa.sqlite"

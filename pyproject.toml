@@ -35,7 +35,11 @@ members = ["kernel"]
 rpa-kernel = { workspace = true }
 
 [dependency-groups]
-dev = ["pytest>=9", "hypothesis>=6.170"]
+dev = [
+    "pytest>=9",
+    "hypothesis>=6.170",
+    "httpx2>=2.16.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

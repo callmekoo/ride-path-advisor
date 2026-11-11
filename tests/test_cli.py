@@ -99,3 +99,23 @@ def test_render_map_embeds_routes_safely(tmp_path):
     page = out.read_text()
     assert "[60.0, 56.8]" in page
     assert "</script><b>" not in page
+
+
+def test_serve_without_a_graph_explains_what_to_do(tmp_path, monkeypatch):
+    monkeypatch.setenv("RPA_DATA_DIR", str(tmp_path / "nothing"))
+    result = runner.invoke(app, ["serve"])
+    assert result.exit_code == 1
+    assert "build-graph" in result.output
+
+
+def test_serve_starts_the_api_on_the_built_graph(data_dir, monkeypatch):
+    import uvicorn
+
+    started = {}
+    monkeypatch.setattr(uvicorn, "run", lambda application, **options: started.update(app=application, **options))
+    result = runner.invoke(app, ["serve", "--port", "8123"])
+
+    assert result.exit_code == 0, result.output
+    assert (started["host"], started["port"]) == ("127.0.0.1", 8123)
+    assert {"/api/route", "/api/meta", "/api/places"} <= {route.path for route in started["app"].routes}
+    assert (data_dir / "rpa.sqlite").exists()

@@ -331,3 +331,26 @@ def enrich_command(
         f"Доля дорог в лесу: {(forest / 255 * length).sum() / length.sum():.0%}; "
         f"высоты от {ele.min() / 10:.0f} до {ele.max() / 10:.0f} м"
     )
+
+
+@app.command("serve")
+def serve_command(
+    host: Annotated[str, typer.Option(help="Адрес; 0.0.0.0 открывает сервис всей сети — логинов в нём нет")] = (
+        "127.0.0.1"
+    ),
+    port: Annotated[int, typer.Option(min=1, max=65535)] = 8000,
+    graph_dir: Annotated[Path | None, typer.Option("--graph", help="Каталог графа")] = None,
+) -> None:
+    """Запустить веб-сервис: маршруты по запросу, GPX, сохранённые места."""
+    import uvicorn
+
+    from rpa.api.app import create_app
+    from rpa.routing.engine import load_engine
+
+    directory = graph_dir or config.current_graph_dir()
+    if not (directory / "meta.json").exists():
+        typer.echo(f"Граф не найден в {directory}. Сначала соберите его: rpa build-graph <файл.pbf>", err=True)
+        raise typer.Exit(1)
+    engine = load_engine(directory)
+    typer.echo(f"Граф: {engine.g.n_nodes} узлов, {engine.g.n_edges} рёбер. Адрес: http://{host}:{port}")
+    uvicorn.run(create_app(engine, config.db_file()), host=host, port=port)
