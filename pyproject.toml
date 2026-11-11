@@ -16,6 +16,7 @@ dependencies = [
     "pyvalhalla>=3.9",
     "fitdecode>=0.10",
     "pyproj>=3.8",
+    "rasterio>=1.5",
 ]
 
 [project.scripts]

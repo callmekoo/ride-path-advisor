@@ -145,3 +145,36 @@ def test_having_ridden_a_restricted_way_twice_lifts_the_restriction(micro):
     assert float(arc_weights(micro, prefs, rides)[2 * footway]) == restricted
     rides[footway] = 2
     assert float(arc_weights(micro, prefs, rides)[2 * footway]) == pytest.approx(restricted / 3.0)
+
+
+def test_forest_preference_makes_open_roads_dearer(micro):
+    e = edge_index(micro, 1, 3)
+    plain = with_edge(micro, e, edge_highway=Highway.UNCLASSIFIED, edge_surface=Surface.PAVED)
+    forest = np.zeros(micro.n_edges, dtype=np.float32)
+    prefs = Prefs(avoid_major=0.0, forest=1.0)
+
+    def at(share: float) -> float:
+        forest[e] = share
+        return float(arc_weights(plain, prefs, forest=forest)[2 * e]) / float(plain.edge_len_m[e])
+
+    assert at(0.0) == pytest.approx(2.0)
+    assert at(0.5) == pytest.approx(1.5)
+    assert at(1.0) == pytest.approx(1.0)
+    # Without land cover data the preference has no effect.
+    np.testing.assert_array_equal(arc_weights(plain, prefs), arc_weights(plain, Prefs(avoid_major=0.0, forest=0.0)))
+
+
+def test_hill_preferences_depend_on_the_direction_of_travel(micro):
+    e = edge_index(micro, 1, 3)
+    plain = with_edge(micro, e, edge_highway=Highway.UNCLASSIFIED, edge_surface=Surface.PAVED)
+    length = float(plain.edge_len_m[e])
+    ascent = np.zeros((micro.n_edges, 2), dtype=np.float32)
+    ascent[e] = [0.05 * length, 0.0]  # a 5 % climb riding u -> v, a descent the other way
+
+    def multipliers(hills: str) -> tuple[float, float]:
+        w = arc_weights(plain, Prefs(avoid_major=0.0, hills=hills), ascent=ascent)
+        return float(w[2 * e]) / length, float(w[2 * e + 1]) / length
+
+    assert multipliers("any") == pytest.approx((1.0, 1.0))
+    assert multipliers("avoid") == pytest.approx((1.5, 1.0))
+    assert multipliers("seek") == pytest.approx((1.0, 1.5))

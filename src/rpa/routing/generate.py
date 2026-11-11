@@ -79,7 +79,10 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
         if rejection(measured, spec) is None:
             path = build_path(engine.g, arcs)
             candidates.append(Candidate(path, measured, score(measured, spec.length_km), note, via_label))
-    return select_diverse(candidates, spec.n_candidates, engine.length)
+    chosen = select_diverse(candidates, spec.n_candidates, engine.length)
+    for candidate in chosen:
+        candidate.profile = engine.profile(candidate.path.arcs)
+    return chosen
 
 
 def _metres(engine: Engine, arcs: np.ndarray) -> float:

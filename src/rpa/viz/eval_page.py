@@ -20,7 +20,7 @@ _PAGE = """<!doctype html>
 <style>
   html, body { height: 100%; margin: 0; font: 13px/1.4 system-ui, sans-serif; color: #222; }
   body { display: flex; }
-  #cases { width: 520px; overflow-y: auto; border-right: 1px solid #ccc; }
+  #cases { width: 640px; overflow-y: auto; border-right: 1px solid #ccc; }
   #map { flex: 1; }
   section { padding: 10px 12px; border-bottom: 1px solid #ddd; cursor: pointer; }
   section.active { background: #eef4fb; }
@@ -39,7 +39,7 @@ _PAGE = """<!doctype html>
 <div id="map"></div>
 <script>
 const results = __RESULTS__;
-const columns = ["", "км", "Δ длины", "повторы", "цена", "поворотов/10 км", "крупные", "грунт", "знакомо", "оценка"];
+const columns = ["", "км", "Δ длины", "повторы", "цена", "поворотов/10 км", "крупные", "грунт", "знакомо", "лес", "набор, м", "оценка"];
 const map = new maplibregl.Map({
   container: "map",
   style: "https://tiles.openfreemap.org/styles/liberty",
@@ -126,6 +126,8 @@ def _result_json(result: CaseResult) -> dict:
                     f"{f.major_share:.0%}",
                     f"{f.unpaved_share:.0%}",
                     f"{f.ridden_share:.0%}",
+                    f"{f.forest_share:.0%}",
+                    f"{f.ascent_m:.0f}",
                     f"{candidate.score:.0f}",
                 ],
             }

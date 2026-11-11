@@ -12,6 +12,7 @@ effect on route preferences is negligible.
 
 import numpy as np
 
+from rpa.arrays import ranges
 from rpa.graph.store import GraphData
 from rpa.match.matcher import Matched
 from rpa.tracks.clean import step_m
@@ -57,8 +58,8 @@ def project(g: GraphData, matched: Matched) -> np.ndarray:
         # Vertices of the way that the graph knows: their index along the way and position.
         first, last = way_first[edges], way_last[edges]
         counts = last - first + 1
-        point = np.repeat(geom_off[edges], counts) + _ranges(counts)
-        vertex = np.repeat(first, counts) + _ranges(counts)
+        point = np.repeat(geom_off[edges], counts) + ranges(counts)
+        vertex = np.repeat(first, counts) + ranges(counts)
         xy = geom_xy[point].astype(np.float64)
         scale = np.array([np.cos(np.radians(xy[0, 1] / 1e7)), 1.0])
 
@@ -82,12 +83,6 @@ def project(g: GraphData, matched: Matched) -> np.ndarray:
     keys = np.unique(np.concatenate(pair_keys)) if pair_keys else np.empty(0, dtype=np.int64)
     rides = np.bincount(keys % n_edges, minlength=n_edges)
     return np.minimum(rides, np.iinfo(np.uint16).max).astype(np.uint16)
-
-
-def _ranges(counts: np.ndarray) -> np.ndarray:
-    """Concatenated arange(c) for each c in counts."""
-    starts = np.cumsum(counts) - counts
-    return np.arange(int(counts.sum())) - np.repeat(starts, counts)
 
 
 def _nearest(queries: np.ndarray, points: np.ndarray) -> np.ndarray:

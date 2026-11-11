@@ -299,8 +299,10 @@ def pop_map_command(
 def enrich_command(
     graph_dir: Annotated[Path | None, typer.Option("--graph", help="Каталог графа")] = None,
     pbf: Annotated[Path | None, typer.Option(help="Файл OSM, из которого собран граф")] = None,
+    rasters: Annotated[bool, typer.Option(help="Скачивать лес и высоты (нужна сеть)")] = True,
 ) -> None:
-    """Дополнить граф сведениями об окружении дорог: выходы к воде."""
+    """Дополнить граф сведениями об окружении дорог: выходы к воде, лес, высоты."""
+    from rpa.enrich import rasters as r
     from rpa.enrich.water import read_water, save_water, water_access
 
     directory = (graph_dir or config.current_graph_dir()).resolve()
@@ -312,4 +314,20 @@ def enrich_command(
     typer.echo(
         f"Водоёмов с подъездом: {len(bodies) - rivers}, участков рек: {rivers}, "
         f"узлов у воды: {len(np.unique(nodes[:, 0]))}"
+    )
+    if not rasters:
+        return
+
+    lonlat, off = r.edge_samples(graph)
+    typer.echo(f"Лес: ESA WorldCover, плиток: {r.tile_count(lonlat, 3)}")
+    forest = r.forest_share(lonlat, off, log=typer.echo)
+    typer.echo(f"Высоты: Copernicus DEM GLO-30, плиток: {r.tile_count(lonlat, 1)}")
+    ele = r.elevation(lonlat, log=typer.echo)
+    ascent = np.stack(r.edge_ascent(off, ele), axis=1)
+    for name, array in (("forest.npy", forest), ("prof_off.npy", off), ("prof_ele.npy", ele), ("ascent.npy", ascent)):
+        np.save(directory / name, array)
+    length = np.asarray(graph.edge_len_m, dtype=np.float64)
+    typer.echo(
+        f"Доля дорог в лесу: {(forest / 255 * length).sum() / length.sum():.0%}; "
+        f"высоты от {ele.min() / 10:.0f} до {ele.max() / 10:.0f} м"
     )

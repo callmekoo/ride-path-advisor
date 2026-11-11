@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from rpa.enrich.rasters import climb_m
 from rpa.osm.tags import Highway, Surface
 from rpa.routing.engine import Engine
 from rpa.routing.path import RoutePath
@@ -32,6 +33,8 @@ class Features:
     major_share: float  # secondary, primary and trunk roads
     unpaved_share: float  # likely unpaved, unpaved and bad surfaces
     ridden_share: float = 0.0  # roads present in the ride history; 0 when there is none
+    forest_share: float = 0.0  # 0 when the graph has no land cover
+    ascent_m: float = 0.0  # 0 when the graph has no elevation
 
 
 @dataclass
@@ -41,6 +44,7 @@ class Candidate:
     score: float
     note: str | None  # shown to the user, e.g. why the length differs from the request
     via_label: str | None = None  # the place the route was asked to pass, e.g. the lake it reaches
+    profile: tuple[np.ndarray, np.ndarray] | None = None  # distance and elevation in metres along the route
 
 
 def features(engine: Engine, w: np.ndarray, arcs: np.ndarray, length: LengthKm | None) -> Features:
@@ -56,6 +60,8 @@ def features(engine: Engine, w: np.ndarray, arcs: np.ndarray, length: LengthKm |
     highway = np.asarray(engine.g.edge_highway)[edges]
     surface = np.asarray(engine.g.edge_surface)[edges]
     ridden_m = float(edge_m[engine.rides[edges] > 0].sum()) if engine.rides is not None else 0.0
+    forest_m = float((edge_m * engine.forest[edges]).sum()) if engine.forest is not None else 0.0
+    profile = engine.profile(arcs)
     return Features(
         length_m=total,
         length_error=abs(total / 1000 - length.target) / length.target if length else 0.0,
@@ -65,6 +71,8 @@ def features(engine: Engine, w: np.ndarray, arcs: np.ndarray, length: LengthKm |
         major_share=float(edge_m[np.isin(highway, _MAJOR)].sum()) / total,
         unpaved_share=float(edge_m[np.isin(surface, _UNPAVED)].sum()) / total,
         ridden_share=ridden_m / total,
+        forest_share=forest_m / total,
+        ascent_m=climb_m(profile[1]) if profile is not None else 0.0,
     )
 
 

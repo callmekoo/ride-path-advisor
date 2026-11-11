@@ -75,3 +75,25 @@ def test_water_labels_and_ranks(grid):
     ]  # fmt: skip
     assert engine.water_rank[:6].tolist() == [0.0, 0.0, 1.0, 0.0, 0.0, np.inf]
     assert engine.at_water[:6].tolist() == [True, True, True, True, True, False]
+
+
+def test_profile_follows_the_route_in_both_directions(grid):
+    from rpa.enrich.rasters import edge_ascent, edge_samples
+
+    engine = Engine(grid)
+    assert engine.profile(np.array([0], dtype=np.uint32)) is None  # no elevation data yet
+    lonlat, off = edge_samples(grid)
+    ele = np.round((lonlat[:, 0] - 60.0) * 10_000).astype(np.int16)  # decimetres: rises eastwards
+    forest = np.full(grid.n_edges, 255, dtype=np.uint8)
+    engine.set_terrain(forest, off, ele, np.stack(edge_ascent(off, ele), axis=1))
+
+    # Edges 0 and 1 run east along the bottom row, 500 m each.
+    east = np.array([0, 2], dtype=np.uint32)
+    distance, height = engine.profile(east)
+    assert distance[0] == 0.0 and distance[-1] == pytest.approx(1000, rel=0.01)
+    assert (np.diff(distance) > 0).all() and (np.diff(height) > 0).all()
+
+    back_distance, back_height = engine.profile(np.array([3, 1], dtype=np.uint32))
+    np.testing.assert_allclose(back_height, height[::-1])
+    np.testing.assert_allclose(back_distance, distance[-1] - distance[::-1], atol=1e-6)
+    assert engine.forest[0] == 1.0

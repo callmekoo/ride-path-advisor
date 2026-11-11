@@ -1,6 +1,6 @@
 """Turn riding preferences into one weight per arc.
 
-    w = length * (1 + m * road_class_penalty + f * unfamiliarity) * surface_factor * restriction_factor
+    w = length * (1 + road class + unfamiliarity + no forest + hills) * surface_factor * restriction_factor
 
 Every factor is at least 1, so a finite weight never undercuts the edge
 length. The kernel's A* heuristic depends on that. Forbidden arcs get +inf.
@@ -65,6 +65,8 @@ class Prefs(BaseModel):
     avoid_major: float = Field(default=0.5, ge=0.0, le=1.0)  # 0 = big roads are fine, 1 = avoid them hard
     surface: Literal["any", "paved", "prefer_unpaved"] = "any"
     familiarity: float = Field(default=0.4, ge=0.0, le=1.0)  # 0 = ignore ride history, 1 = stick to ridden roads
+    forest: float = Field(default=0.3, ge=0.0, le=1.0)  # 0 = indifferent, 1 = stay in the forest
+    hills: Literal["any", "avoid", "seek"] = "any"
 
 
 def popularity(rides: np.ndarray) -> np.ndarray:
@@ -72,11 +74,27 @@ def popularity(rides: np.ndarray) -> np.ndarray:
     return np.minimum(1.0, np.log1p(rides) / np.log1p(FULLY_FAMILIAR_RIDES))
 
 
-def arc_weights(g: GraphData, prefs: Prefs, rides: np.ndarray | None = None) -> np.ndarray:
+# Extra metres per metre: for climbing when hills are avoided (per unit of grade),
+# and for flat road when hills are sought (fading out at SOUGHT_GRADE).
+AVOID_HILLS_PER_GRADE = 10.0
+SEEK_HILLS_FLAT_PENALTY = 0.5
+SOUGHT_GRADE = 0.04
+
+
+def arc_weights(
+    g: GraphData,
+    prefs: Prefs,
+    rides: np.ndarray | None = None,
+    forest: np.ndarray | None = None,
+    ascent: np.ndarray | None = None,
+) -> np.ndarray:
     """Weights for the kernel: f32[2E], arc 2e runs u -> v and arc 2e + 1 runs v -> u.
 
-    `rides` (per edge, how many recorded rides used it) enables the familiarity
-    preference; without it every road counts as equally unknown.
+    Optional per-edge data switch on the preferences that need it; without the
+    data a preference has no effect:
+    `rides` (how many recorded rides used the edge) - familiarity;
+    `forest` (share of the edge in forest, 0..1) - forest;
+    `ascent` (f32[E, 2]: metres climbed riding u -> v and v -> u) - hills.
     """
     flags = np.asarray(g.edge_flags)
     major_scale = 0.3 + 1.7 * prefs.avoid_major
@@ -88,14 +106,24 @@ def arc_weights(g: GraphData, prefs: Prefs, rides: np.ndarray | None = None) -> 
     if rides is not None:
         multiplier = multiplier + UNFAMILIAR_PENALTY * prefs.familiarity * (1.0 - popularity(rides))
         restricted &= rides < RIDES_LIFTING_RESTRICTION
-    multiplier = multiplier * np.array(_SURFACE_FACTOR[prefs.surface])[g.edge_surface]
-    multiplier = multiplier * np.where(restricted, SOFT_RESTRICTION_FACTOR, 1.0)
-    multiplier = multiplier * np.where(flags & FORD, FORD_FACTOR, 1.0)
-    # The cap keeps penalties from compounding into a de-facto ban; real bans stay infinite.
-    multiplier = np.where(np.isfinite(multiplier), np.minimum(multiplier, MAX_MULTIPLIER), _INF)
+    if forest is not None:
+        multiplier = multiplier + prefs.forest * (1.0 - forest)
+    factor = np.array(_SURFACE_FACTOR[prefs.surface])[g.edge_surface]
+    factor = factor * np.where(restricted, SOFT_RESTRICTION_FACTOR, 1.0)
+    factor = factor * np.where(flags & FORD, FORD_FACTOR, 1.0)
 
-    edge_weight = np.asarray(g.edge_len_m, dtype=np.float64) * multiplier
+    length = np.asarray(g.edge_len_m, dtype=np.float64)
     weights = np.empty(2 * g.n_edges, dtype=np.float32)
-    weights[0::2] = np.where(flags & FWD_OK, edge_weight, _INF)
-    weights[1::2] = np.where(flags & BACK_OK, edge_weight, _INF)
+    for direction, allowed in ((0, FWD_OK), (1, BACK_OK)):
+        additive = multiplier
+        if ascent is not None and prefs.hills != "any":
+            grade = ascent[:, direction] / length
+            if prefs.hills == "avoid":
+                additive = additive + AVOID_HILLS_PER_GRADE * grade
+            else:
+                additive = additive + SEEK_HILLS_FLAT_PENALTY * (1.0 - np.minimum(1.0, grade / SOUGHT_GRADE))
+        total = additive * factor
+        # The cap keeps penalties from compounding into a de-facto ban; real bans stay infinite.
+        total = np.where(np.isfinite(total), np.minimum(total, MAX_MULTIPLIER), _INF)
+        weights[direction::2] = np.where(flags & allowed, length * total, _INF)
     return weights
