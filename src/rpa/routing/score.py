@@ -98,7 +98,8 @@ def score(f: Features, length: LengthKm | None) -> float:
         half_band = max(length.target - length.min, length.max - length.target, 1e-9)
         value -= 20.0 * min(abs(f.length_m / 1000 - length.target) / half_band, 1.0)
     value -= 80.0 * f.repeat_share
-    value -= 30.0 * float(np.clip(f.cost_ratio - 1.0, 0.0, 1.0))
+    # 1 - 1/ratio grows with the ratio without ever saturating, so dearer routes always rank lower.
+    value -= 30.0 * (1.0 - 1.0 / max(f.cost_ratio, 1.0))
     value -= 0.5 * max(0.0, f.turns_per_10km - 15.0)
     return max(value, 0.0)
 
