@@ -120,6 +120,15 @@ wheels = [
 ]
 
 [[package]]
+name = "fitdecode"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/19/1bde056f443d8ce890dbc0f0bd8a216cc9ebfda4221619767f80cf1835e2/fitdecode-0.11.0.tar.gz", hash = "sha256:52d920e50eaa76eb065b20bfd4e42f72195e894a079098dacc1cafa908cd4b83", size = 107149, upload-time = "2025-08-06T08:08:42.105Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7b/7b/75829f9b77b2546f955ec265de10de993939bf3218b5d957ca79803a2d28/fitdecode-0.11.0-py3-none-any.whl", hash = "sha256:a1bdb9b4d1e9ebac0001fc58c22fe07a3f9967ca4e13258c6ef99cdb8d697a78", size = 109961, upload-time = "2025-08-06T08:08:39.033Z" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -415,6 +424,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pyvalhalla"
+version = "3.9.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b3/71/bc3d87dd132694b38186ab5fe6cebff18b5b34e6a1852ced24ea79033ffe/pyvalhalla-3.9.1.tar.gz", hash = "sha256:a0037952a956d7f0212453e7a7195fd3b27c9b357a183f5d33a3ebebaaf5e957", size = 36531675, upload-time = "2026-10-06T11:38:00.082Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5c/3d/d27b849a66f2c30e030bdbf2b76470766c10d2037d61cb9906fd2df46b33/pyvalhalla-3.9.1-cp312-abi3-macosx_14_0_arm64.whl", hash = "sha256:1780e2a586391a14028ac134f4335eee73dd88df66bf22adbe2d318493b4d053", size = 26380619, upload-time = "2026-10-06T11:37:49.305Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/3a/087f21f1d3551ed30fed4a8945f631482482183ca9bb69a2fddc9454402a/pyvalhalla-3.9.1-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:6ebe5f9dd6ce3b16413f939a271d68e64a4addd44df8a802a8eda0b9ca0bf16f", size = 34736379, upload-time = "2026-10-06T11:37:52.2Z" },
+    { url = "https://files.pythonhosted.org/packages/df/47/22bf3a1dcc911bc149b854892812e04f42e30c8c34ade8320141b1f3ba32/pyvalhalla-3.9.1-cp312-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:7b49c5e5f86cefd555b473aaaf34df3305889d30aa889b8abd3b4c2acc622271", size = 37532140, upload-time = "2026-10-06T11:37:54.864Z" },
+    { url = "https://files.pythonhosted.org/packages/89/56/3f3087dff7e1057a007a82044d5f957485d093c6e9ca08b7cf485612fa51/pyvalhalla-3.9.1-cp312-abi3-win_amd64.whl", hash = "sha256:542ea3e11da281c63f2043fa69a2f426c5b309cb1e3b0032028f7034847d1c13", size = 22251811, upload-time = "2026-10-06T11:37:57.596Z" },
+]
+
+[[package]]
 name = "requests"
 version = "2.34.2"
 source = { registry = "https://pypi.org/simple" }
@@ -447,10 +468,12 @@ name = "rpa"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fitdecode" },
     { name = "httpx", extra = ["socks"] },
     { name = "numpy" },
     { name = "osmium" },
     { name = "pydantic" },
+    { name = "pyvalhalla" },
     { name = "rpa-kernel" },
     { name = "scipy" },
     { name = "shapely" },
@@ -465,10 +488,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fitdecode", specifier = ">=0.10" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.28" },
     { name = "numpy", specifier = ">=2.5" },
     { name = "osmium", specifier = ">=4.3" },
     { name = "pydantic", specifier = ">=2.12" },
+    { name = "pyvalhalla", specifier = ">=3.9" },
     { name = "rpa-kernel", editable = "kernel" },
     { name = "scipy", specifier = ">=1.18" },
     { name = "shapely", specifier = ">=2.2" },

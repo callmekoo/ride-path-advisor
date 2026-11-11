@@ -38,3 +38,16 @@ REGION_BOUNDARY_POLY_URL = (
     "https://download.openstreetmap.fr/polygons/russia/ural_federal_district/sverdlovsk_oblast.poly"
 )
 REGION_BUFFER_KM = 100.0
+
+
+def inbox_dir() -> Path:
+    """Drop Strava export archives and loose GPX/FIT/TCX files here."""
+    return data_dir() / "inbox"
+
+
+def tracks_dir() -> Path:
+    return data_dir() / "tracks"
+
+
+def valhalla_dir() -> Path:
+    return data_dir() / "valhalla"

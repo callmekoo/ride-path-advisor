@@ -185,3 +185,38 @@ def eval_command(
     typer.echo(f"Страница: {out}")
     if any(result.problems for result in results):
         raise typer.Exit(1)
+
+
+def _load_current_graph(graph_dir: Path | None) -> GraphData:
+    directory = graph_dir or config.current_graph_dir()
+    if not (directory / "meta.json").exists():
+        typer.echo(f"Граф не найден в {directory}. Сначала соберите его: rpa build-graph <файл.pbf>", err=True)
+        raise typer.Exit(1)
+    return load_graph(directory)[0]
+
+
+@app.command("import-tracks")
+def import_tracks_command(
+    graph_dir: Annotated[Path | None, typer.Option("--graph", help="Каталог графа")] = None,
+) -> None:
+    """Импортировать заезды из data/inbox: архивы Strava и отдельные GPX/FIT/TCX."""
+    from rpa.tracks.ingest import import_inbox
+    from rpa.tracks.store import save_tracks
+
+    inbox = config.inbox_dir()
+    if not inbox.is_dir():
+        typer.echo(f"Нет каталога {inbox}: положите туда архив Strava или файлы треков.", err=True)
+        raise typer.Exit(1)
+    lonlat = np.asarray(_load_current_graph(graph_dir).node_lonlat)
+    bbox = (*lonlat.min(axis=0).tolist(), *lonlat.max(axis=0).tolist())
+    tracks, report = import_inbox(inbox, bbox, log=typer.echo)
+    save_tracks(tracks, config.tracks_dir())
+
+    typer.echo(f"Импортировано заездов: {report.imported}, {report.km:.0f} км, сегментов: {tracks.n_segments}")
+    typer.echo(f"Целиком вне региона или слишком короткие: {report.outside_region}")
+    if report.skipped_types:
+        skipped = ", ".join(f"{name or '(без типа)'} — {count}" for name, count in report.skipped_types.most_common())
+        typer.echo(f"Пропущены по типу активности: {skipped}")
+    for error in report.unreadable:
+        typer.echo(f"Не удалось прочитать: {error}", err=True)
+    typer.echo(f"Треки записаны в {config.tracks_dir()}")

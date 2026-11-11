@@ -13,6 +13,8 @@ dependencies = [
     "shapely>=2.2",
     "httpx[socks]>=0.28",
     "pydantic>=2.12",
+    "pyvalhalla>=3.9",
+    "fitdecode>=0.10",
 ]
 
 [project.scripts]
