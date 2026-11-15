@@ -164,6 +164,18 @@ def test_walkable_platforms_tags_only_bare_platforms(tmp_path):
     assert source.read_bytes() == before
 
 
+def test_walkable_platforms_replaces_stale_target(tmp_path):
+    source = write_pbf(tmp_path, BRIDGE_MAP, "bridge")
+    target = tmp_path / "copy.osm.pbf"
+    target.write_bytes(b"stale")
+
+    assert walkable_platforms(source, target) == 1
+
+    fresh = tmp_path / "fresh.osm.pbf"
+    assert walkable_platforms(source, fresh) == 1
+    assert read_objects(target) == read_objects(fresh)
+
+
 def test_tiles_stamp_carries_hash_and_recipe():
     stamp = tiles_stamp("abc")
     assert "abc" in stamp and TILES_RECIPE in stamp and stamp != "abc"

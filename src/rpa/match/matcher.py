@@ -61,6 +61,8 @@ def tiles_stamp(source_sha256: str) -> str:
 def walkable_platforms(source: Path, target: Path) -> int:
     """Write a copy of `source` where bare railway platforms get `highway=footway`; returns how many.
 
+    An existing `target` is replaced.
+
     Valhalla does not route over a way without a `highway` tag, so a footbridge reached
     only via stairs and platforms is an island for it and rides over it never match.
     `highway=platform` does not help either (Valhalla skips it); `highway=footway` does,
@@ -68,7 +70,7 @@ def walkable_platforms(source: Path, target: Path) -> int:
     stretches onto the platform edges of our graph unchanged.
     """
     changed = 0
-    with osmium.SimpleWriter(str(target)) as writer:
+    with osmium.SimpleWriter(str(target), overwrite=True) as writer:
         # Only objects carrying a platform tag reach Python; everything else goes to the writer as is.
         processor = (
             osmium.FileProcessor(str(source))
