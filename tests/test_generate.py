@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 
+from helpers import with_walked_cut
+
 from rpa.routing.cost import Prefs
 from rpa.routing.diversity import core_edges, overlap
 from rpa.routing.engine import Engine
@@ -208,7 +210,7 @@ def test_point_to_point_through_a_place_off_the_direct_line(grid, grid_engine):
     for candidate in candidates:
         assert node(10, 16) in nodes_on(grid_engine, candidate)
         assert_sound(grid_engine, candidate.path.arcs, node(2, 10), node(18, 10))
-    assert candidates[0].path.length_m / 1000 >= 14.0  # 8 km east plus 3 km north and back
+    assert candidates[0].path.length_m / 1000 >= 13.9  # 8 km east plus 3 km north and back, grid edges a bit short
 
 
 def test_point_to_point_through_a_place_with_a_length(grid, grid_engine):
@@ -303,3 +305,14 @@ def test_a_place_on_a_dead_end_road_is_ridden_to_and_back_from(grid):
         assert fork in nodes_on(engine, candidate) and candidate.via_label == "Мыс"
         assert 14.4 <= candidate.path.length_m / 1000 <= 17.6
         assert candidate.features.repeat_share < 0.05  # only the 160 m to the fork and back
+
+
+def test_p2p_without_length_prefers_the_cheapest_route_over_long_detours(grid):
+    # Every crossing of the cut at i = 10 is walked except two rows at the southern edge.
+    engine = Engine(with_walked_cut(grid, 10))
+    spec = RouteSpec(start=point(grid, 10, 10), end=point(grid, 11, 10), shape="p2p", n_candidates=3)
+    candidates = generate(engine, spec)
+
+    assert candidates
+    assert candidates[0].features.walk_m > 0
+    assert candidates[0].path.length_m == min(c.path.length_m for c in candidates)

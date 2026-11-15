@@ -10,7 +10,15 @@ from rpa.routing.cost import Prefs
 from rpa.routing.diversity import overlap, select_diverse
 from rpa.routing.engine import Engine
 from rpa.routing.path import build_path
-from rpa.routing.score import Candidate, features, rejection, score
+from rpa.routing.score import (
+    EXTRA_COST_PENALTY,
+    MAX_TURN_PENALTY,
+    Candidate,
+    Features,
+    features,
+    rejection,
+    score,
+)
 from rpa.routing.spec import LengthKm, Point, RouteSpec
 
 START = Point(lon=60.0, lat=56.8)
@@ -162,3 +170,37 @@ def test_shared_start_and_finish_do_not_count_as_overlap(grid_engine):
     south = np.concatenate([stem_out, (square(grid_engine, 5, 2, 8)[::-1] ^ 1), stem_back])
     a, b = candidate(grid_engine, north, 90.0), candidate(grid_engine, south, 80.0)
     assert select_diverse([a, b], 2, grid_engine.length, skip_m=2500.0) == [a, b]
+
+
+def test_cost_m_is_the_sum_of_arc_weights(grid_engine):
+    w = grid_engine.weights(Prefs())
+    arcs = square(grid_engine, 2, 2, 4)
+    f = features(grid_engine, w, arcs, None)
+    assert f.cost_m == pytest.approx(float(w[arcs].astype(np.float64).sum()), rel=1e-6)
+
+
+def _plain(length_m: float, cost_ratio: float, **kwargs) -> Features:
+    return Features(length_m, 0.0, 0.0, cost_ratio, 0.0, 0.0, 0.0, **kwargs)
+
+
+def test_without_a_length_dearer_routes_lose_by_their_extra_cost():
+    cheap, dear = _plain(5000, 1.0), _plain(5000, 2.0)  # the dear one costs twice as much
+    assert score(cheap, None, cheapest_cost_m=cheap.cost_m) == score(cheap, None)
+    assert score(dear, None, cheapest_cost_m=cheap.cost_m) == pytest.approx(
+        score(dear, None) - EXTRA_COST_PENALTY / 2
+    )
+
+
+def test_cheapest_cost_is_ignored_when_a_length_was_asked_for():
+    f = _plain(5000, 2.0)
+    assert score(f, LengthKm.around(5), cheapest_cost_m=1000.0) == score(f, LengthKm.around(5))
+
+
+def test_zero_length_route_gets_no_extra_cost_deduction():
+    f = _plain(0.0, 1.0)
+    assert score(f, None, cheapest_cost_m=1000.0) == score(f, None)
+
+
+def test_turn_penalty_is_capped():
+    twisty = Features(500.0, 0.0, 0.0, 1.0, 10_000.0, 0.0, 0.0)
+    assert score(twisty, None) == pytest.approx(100.0 - MAX_TURN_PENALTY)

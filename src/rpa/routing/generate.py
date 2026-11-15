@@ -76,7 +76,7 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
         # The length could not be honoured; judge the routes on everything else.
         spec = spec.model_copy(update={"length_km": None})
 
-    candidates = []
+    measured_walks = []
     for arcs, via in walks:
         via_label = None
         if must is not None or spec.via is not None:
@@ -86,8 +86,13 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
             via_label = spec.via.label if spec.via is not None else engine.water_label(via)
         measured = features(engine, w, arcs, spec.length_km)
         if rejection(measured, spec) is None:
-            path = build_path(engine.g, arcs)
-            candidates.append(Candidate(path, measured, score(measured, spec.length_km), note, via_label))
+            measured_walks.append((arcs, measured, via_label))
+    # Without a wanted length, routes are compared by total cost against the cheapest one.
+    cheapest = min((m.cost_m for _, m, _ in measured_walks), default=None) if spec.length_km is None else None
+    candidates = [
+        Candidate(build_path(engine.g, arcs), m, score(m, spec.length_km, cheapest), note, via_label)
+        for arcs, m, via_label in measured_walks
+    ]
     chosen = select_diverse(candidates, spec.n_candidates, engine.length)
     for candidate in chosen:
         candidate.profile = engine.profile(candidate.path.arcs)

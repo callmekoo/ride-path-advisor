@@ -17,6 +17,7 @@ class Case:
     name: str
     text: str  # the request as a person would phrase it
     spec: RouteSpec
+    expect_walk: bool = False  # the best route must include a stretch where the bicycle is walked
 
 
 def _loop(km: LengthKm, **prefs) -> RouteSpec:
@@ -49,4 +50,14 @@ CASES = [
         RouteSpec(start=REVDA, end=EKB, shape="p2p", length_km=LengthKm.around(80), prefs=Prefs(avoid_major=0.9)),
     ),
     Case("p2p-revda", "от Ревды до Екатеринбурга", RouteSpec(start=REVDA, end=EKB, shape="p2p")),
+    Case(
+        "p2p-peregon-bridge",
+        "от Палкинского Торфяника до Палкинских каменных палаток",
+        RouteSpec(
+            start=Point(lon=60.3839, lat=56.8496, label="Палкинский Торфяник"),
+            end=Point(lon=60.3865, lat=56.8700, label="Палкинские каменные палатки"),
+            shape="p2p",
+        ),
+        expect_walk=True,
+    ),
 ]

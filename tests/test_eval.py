@@ -47,3 +47,14 @@ def test_render_eval_writes_a_safe_page(grid, grid_engine, tmp_path):
     assert "grid-loop" in page
     assert "maplibre" in page
     assert "кольцо </script>" not in page
+
+
+def test_check_wants_a_walked_stretch_when_the_case_expects_one(grid, grid_engine):
+    case = dataclasses.replace(grid_case(grid, 16.0), expect_walk=True)
+    first, *rest = run_case(grid_engine, case).candidates
+    assert any("пешего" in p for p in check(case, [first, *rest], 1.0))
+
+    walking = dataclasses.replace(first, features=dataclasses.replace(first.features, walk_m=100.0))
+    assert not any("пешего" in p for p in check(case, [walking, *rest], 1.0))
+    assert not any("пешего" in p for p in check(case, [], 1.0))
+    assert not any("пешего" in p for p in check(grid_case(grid, 16.0), [first, *rest], 1.0))

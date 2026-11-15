@@ -80,3 +80,17 @@ def with_edge(g: GraphData, e: int, **attrs) -> GraphData:
         array[e] = array[e] | value if name == "edge_flags" else value
         changes[name] = array
     return dataclasses.replace(g, **changes)
+
+
+def with_walked_cut(g: GraphData, i: int, open_rows: range = range(0, 2)) -> GraphData:
+    """A copy of the grid where every street crossing between columns i and i + 1 is walk-only.
+
+    The crossings in the rows `open_rows` (the grid's southern edge by default) stay rideable.
+    """
+    from rpa.osm.tags import DISMOUNT
+
+    rows = np.asarray(g.edge_u) // 21
+    cut = (np.asarray(g.edge_u) % 21 == i) & (np.asarray(g.edge_v) % 21 == i + 1) & ~np.isin(rows, list(open_rows))
+    flags = g.edge_flags.copy()
+    flags[cut] |= DISMOUNT
+    return dataclasses.replace(g, edge_flags=flags)

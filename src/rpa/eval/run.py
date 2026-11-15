@@ -34,6 +34,8 @@ def check(case: Case, candidates: list[Candidate], seconds: float) -> list[str]:
             problems.append(f"№{number}: длина {km:.1f} км вне {length.min:.1f}–{length.max:.1f} км")
         if candidate.features.repeat_share > MAX_REPEAT_SHARE:
             problems.append(f"№{number}: повторов {candidate.features.repeat_share:.0%}")
+    if case.expect_walk and candidates and candidates[0].features.walk_m == 0:
+        problems.append("№1: нет пешего участка")
     if seconds > MAX_SECONDS:
         problems.append(f"считалось {seconds:.1f} с, допустимо {MAX_SECONDS:.0f} с")
     return problems

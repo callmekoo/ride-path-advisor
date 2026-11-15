@@ -3,6 +3,11 @@
 Arc weights steer the search one road at a time. The score looks at the whole
 route and sees what a single arc cannot: retraced road, missed length, how
 twisty the result is. The numbers here are starting points for tuning.
+
+The cost ratio only says how good a kilometre is, not how much the route costs
+in all. When a length was asked for, the length band already bounds the total;
+when it was not, a short route with a dear stretch would lose to long, pleasant
+detours, so `score` also compares the total cost with the cheapest route found.
 """
 
 from dataclasses import dataclass
@@ -21,6 +26,10 @@ _UNPAVED = [Surface.LIKELY_UNPAVED, Surface.UNPAVED, Surface.BAD]
 TURN_ANGLE_DEG = 45.0
 MAX_REPEAT_SHARE = 0.3
 MAX_UNPAVED_SHARE_ON_PAVED = 0.10
+# Without a wanted length, the score of a route that costs twice the cheapest one drops by half of this.
+EXTRA_COST_PENALTY = 60.0
+# A short route with a couple of turns would otherwise count hundreds of turns per 10 km.
+MAX_TURN_PENALTY = 20.0
 
 
 @dataclass(frozen=True)
@@ -36,6 +45,11 @@ class Features:
     forest_share: float = 0.0  # 0 when the graph has no land cover
     ascent_m: float = 0.0  # 0 when the graph has no elevation
     walk_m: float = 0.0  # metres where the bicycle is walked; an edge passed twice counts twice
+
+    @property
+    def cost_m(self) -> float:
+        """Sum of the arc weights along the route."""
+        return self.cost_ratio * self.length_m
 
 
 @dataclass
@@ -103,8 +117,13 @@ def _count_turns(engine: Engine, arcs: np.ndarray) -> int:
     return int(((change > TURN_ANGLE_DEG) & at_junction).sum())
 
 
-def score(f: Features, length: LengthKm | None) -> float:
-    """Higher is better; 100 is a route with nothing to complain about."""
+def score(f: Features, length: LengthKm | None, cheapest_cost_m: float | None = None) -> float:
+    """Higher is better; 100 is a route with nothing to complain about.
+
+    `cheapest_cost_m` is the least `cost_m` among the routes being compared. It counts only
+    when no length was asked for: with a length, the band limits how much a route may cost,
+    without one nothing else stops a long detour from beating a short route with a dear stretch.
+    """
     value = 100.0
     if length:
         half_band = max(length.target - length.min, length.max - length.target, 1e-9)
@@ -112,7 +131,9 @@ def score(f: Features, length: LengthKm | None) -> float:
     value -= 80.0 * f.repeat_share
     # 1 - 1/ratio grows with the ratio without ever saturating, so dearer routes always rank lower.
     value -= 30.0 * (1.0 - 1.0 / max(f.cost_ratio, 1.0))
-    value -= 0.5 * max(0.0, f.turns_per_10km - 15.0)
+    value -= min(0.5 * max(0.0, f.turns_per_10km - 15.0), MAX_TURN_PENALTY)
+    if not length and cheapest_cost_m is not None and f.cost_m > 0.0:
+        value -= EXTRA_COST_PENALTY * (1.0 - cheapest_cost_m / f.cost_m)
     return max(value, 0.0)
 
 
