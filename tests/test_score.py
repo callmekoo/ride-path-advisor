@@ -110,6 +110,8 @@ def test_rejection_reasons(grid_engine):
     assert "повтор" in rejection(dataclasses.replace(f, repeat_share=0.5), loop_spec(8))
     assert "грунт" in rejection(dataclasses.replace(f, unpaved_share=0.2), loop_spec(8, surface="paved"))
     assert rejection(dataclasses.replace(f, unpaved_share=0.2), loop_spec(8)) is None
+    assert "грунт" in rejection(dataclasses.replace(f, unpaved_share=0.05), loop_spec(8, surface="paved"))
+    assert rejection(dataclasses.replace(f, unpaved_share=0.02), loop_spec(8, surface="paved")) is None
 
 
 def candidate(engine: Engine, arcs: np.ndarray, value: float) -> Candidate:

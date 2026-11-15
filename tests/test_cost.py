@@ -63,8 +63,24 @@ def test_paved_mode_ranks_surfaces_and_forbids_bad_ones(micro):
         multiplier(with_edge(micro, e, edge_highway=Highway.UNCLASSIFIED, edge_surface=s), e, prefs)
         for s in Surface
     ]
-    assert by_surface[: Surface.BAD] == pytest.approx([1.0, 1.1, 2.0, 5.0, 12.0])
+    assert by_surface[: Surface.BAD] == pytest.approx([1.0, 1.1, 3.0, 25.0, 40.0])
     assert np.isinf(by_surface[Surface.BAD])
+
+
+def test_on_a_road_ride_dirt_costs_more_than_riding_asphalt_twice(micro):
+    # A loop avoids repeats by paying USED_EDGE_FACTOR for a road it has already used. If fresh
+    # dirt were cheaper than that, road rides would take dirt connectors (they did: up to 8%).
+    from rpa.routing.walk import USED_EDGE_FACTOR
+
+    e = edge_index(micro, 1, 3)
+    prefs = Prefs(avoid_major=0.0, surface="paved")
+
+    def factor(surface: Surface) -> float:
+        return multiplier(with_edge(micro, e, edge_highway=Highway.UNCLASSIFIED, edge_surface=surface), e, prefs)
+
+    assert factor(Surface.LIKELY_UNPAVED) > USED_EDGE_FACTOR * factor(Surface.PAVED)
+    assert factor(Surface.UNPAVED) > factor(Surface.LIKELY_UNPAVED)
+    assert factor(Surface.UNKNOWN) < USED_EDGE_FACTOR  # unknown is usually asphalt nobody tagged
 
 
 def test_bad_surface_stays_rideable_outside_paved_mode(micro):

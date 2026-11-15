@@ -41,9 +41,11 @@ _ROAD_CLASS_PENALTY = {
 _INF = float("inf")
 
 # Factor per Surface class (paved .. bad) for each surface mode.
+# On a road ride dirt must cost more than riding a paved road a second time (USED_EDGE_FACTOR in
+# routing/walk.py), or a loop takes a dirt connector just to avoid a repeat.
 _SURFACE_FACTOR = {
     "any": (1.0, 1.0, 1.05, 1.1, 1.15, 1.8),
-    "paved": (1.0, 1.1, 2.0, 5.0, 12.0, _INF),
+    "paved": (1.0, 1.1, 3.0, 25.0, 40.0, _INF),
     "prefer_unpaved": (1.6, 1.4, 1.15, 1.0, 1.0, 1.5),
 }
 

@@ -25,7 +25,7 @@ _UNPAVED = [Surface.LIKELY_UNPAVED, Surface.UNPAVED, Surface.BAD]
 
 TURN_ANGLE_DEG = 45.0
 MAX_REPEAT_SHARE = 0.3
-MAX_UNPAVED_SHARE_ON_PAVED = 0.10
+MAX_UNPAVED_SHARE_ON_PAVED = 0.03
 # Without a wanted length, the score of a route that costs twice the cheapest one drops by half of this.
 EXTRA_COST_PENALTY = 60.0
 # A short route with a couple of turns would otherwise count hundreds of turns per 10 km.
