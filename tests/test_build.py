@@ -19,7 +19,7 @@ import pytest
 from helpers import edge_index
 
 from rpa.osm.build import RawWays, assemble, build_graph, read_ways
-from rpa.osm.tags import BACK_OK, FWD_OK, SOFT_RESTRICTED, Highway, Surface
+from rpa.osm.tags import BACK_OK, BRIDGE, DISMOUNT, FWD_OK, SOFT_RESTRICTED, Highway, Surface
 
 
 def test_graph_is_consistent(micro):
@@ -160,3 +160,32 @@ def test_nodes_missing_from_the_extract_are_skipped(tmp_path):
     raw = read_ways(path)
     assert raw.way_id.tolist() == [1]
     assert raw.refs.tolist() == [1, 2, 3]
+
+
+FOOTBRIDGE_NODES = "".join(f"n{i} x60.00{i} y56.8\n" for i in range(1, 7))
+STREET_AB = "w1 Thighway=residential Nn1,n2\n"
+STAIRS_BC = "w2 Thighway=steps Nn2,n3\n"
+BRIDGE_CD = "w3 Thighway=footway,bridge=yes Nn3,n4\n"
+STAIRS_DE = "w4 Thighway=steps Nn4,n5\n"
+STREET_EF = "w5 Thighway=residential Nn5,n6\n"
+
+
+def test_footbridge_reached_by_stairs_joins_the_graph(tmp_path):
+    path = tmp_path / "footbridge.opl"
+    path.write_text(FOOTBRIDGE_NODES + STREET_AB + STAIRS_BC + BRIDGE_CD + STAIRS_DE + STREET_EF)
+    g = build_graph(path)
+    g.validate()
+    assert g.node_osm_id.tolist() == [1, 2, 3, 4, 5, 6]
+    for u, v in [(2, 3), (4, 5)]:
+        edge = edge_index(g, u, v)
+        assert g.edge_highway[edge] == Highway.STEPS
+        assert g.edge_flags[edge] & DISMOUNT
+    bridge = edge_index(g, 3, 4)
+    assert g.edge_flags[bridge] & BRIDGE
+
+
+def test_footbridge_without_stairs_is_an_island_and_dropped(tmp_path):
+    path = tmp_path / "island.opl"
+    path.write_text(FOOTBRIDGE_NODES + STREET_AB + BRIDGE_CD + STREET_EF)
+    g = build_graph(path)
+    assert not set(g.node_osm_id.tolist()) & {3, 4}

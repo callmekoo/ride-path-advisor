@@ -4,6 +4,7 @@ from rpa.osm.tags import (
     BACK_OK,
     BRIDGE,
     CYCLE_INFRA,
+    DISMOUNT,
     FORD,
     FWD_OK,
     SOFT_RESTRICTED,
@@ -22,13 +23,13 @@ NOT_ROUTABLE = [
     {"highway": "motorway_link"},
     {"highway": "construction"},
     {"highway": "proposed"},
-    {"highway": "steps"},
-    {"highway": "platform"},
     {"highway": "trunk", "motorroad": "yes"},
     {"highway": "track", "winter_road": "yes"},
     {"highway": "unclassified", "ice_road": "yes"},
     {"highway": "service", "access": "no"},
     {"highway": "track", "access": "military"},
+    {"highway": "steps", "access": "no"},
+    {"highway": "footway", "access": "no"},
     {"highway": "track", "winter_road": "yes", "bicycle": "yes"},
 ]
 
@@ -142,7 +143,7 @@ SOFT_CASES = [
     ({"highway": "track", "vehicle": "private"}, True),
     ({"highway": "residential", "bicycle": "no"}, True),
     ({"highway": "primary", "bicycle": "use_sidepath"}, True),
-    ({"highway": "pedestrian", "bicycle": "dismount"}, True),
+    ({"highway": "pedestrian", "bicycle": "dismount"}, False),  # walk-only: DISMOUNT instead
     ({"highway": "footway"}, True),
     ({"highway": "footway", "bicycle": "yes"}, False),
     ({"highway": "footway", "bicycle": "designated"}, False),
@@ -193,3 +194,46 @@ def test_feature_flag_set(tags, flag):
 )
 def test_feature_flags_absent(tags):
     assert not classify_way(tags).flags & (FORD | BRIDGE | TUNNEL | CYCLE_INFRA)
+
+
+WALK_ONLY_CASES = [
+    ({"highway": "steps"}, Highway.STEPS),
+    ({"highway": "steps", "bicycle": "yes"}, Highway.STEPS),
+    ({"highway": "steps", "oneway": "yes"}, Highway.STEPS),
+    ({"highway": "steps", "access": "no", "foot": "yes"}, Highway.STEPS),
+    ({"highway": "corridor"}, Highway.FOOTWAY),
+    ({"highway": "platform"}, Highway.FOOTWAY),
+    ({"highway": "footway", "bicycle": "dismount"}, Highway.FOOTWAY),
+    ({"highway": "pedestrian", "bicycle": "dismount"}, Highway.PEDESTRIAN),
+    ({"highway": "footway", "access": "no", "foot": "yes"}, Highway.FOOTWAY),
+    ({"highway": "footway", "access": "military", "foot": "designated"}, Highway.FOOTWAY),
+    ({"highway": "footway", "access": "no", "foot": "permissive"}, Highway.FOOTWAY),
+]
+
+
+@pytest.mark.parametrize(("tags", "highway"), WALK_ONLY_CASES)
+def test_walk_only(tags, highway):
+    attrs = classify_way(tags)
+    assert attrs.highway == highway
+    assert attrs.flags & DISMOUNT
+    assert not attrs.flags & SOFT_RESTRICTED
+    assert not attrs.flags & CYCLE_INFRA
+    assert attrs.flags & BOTH == BOTH
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [
+        {"highway": "footway"},
+        {"highway": "footway", "bicycle": "no"},
+        {"highway": "primary", "bicycle": "use_sidepath"},
+        {"highway": "residential"},
+        {"highway": "cycleway"},
+    ],
+)
+def test_not_walk_only(tags):
+    assert not classify_way(tags).flags & DISMOUNT
+
+
+def test_footway_bicycle_no_stays_soft_restricted():
+    assert classify_way({"highway": "footway", "bicycle": "no"}).flags & SOFT_RESTRICTED

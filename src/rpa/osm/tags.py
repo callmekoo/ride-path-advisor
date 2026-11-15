@@ -23,6 +23,7 @@ class Highway(IntEnum):
     SECONDARY = 10
     PRIMARY = 11
     TRUNK = 12
+    STEPS = 13  # walk-only: the bike is carried or pushed
 
 
 class Surface(IntEnum):
@@ -45,6 +46,7 @@ FORD = 8
 BRIDGE = 16
 TUNNEL = 32
 CYCLE_INFRA = 64
+DISMOUNT = 128  # walk-only: the bicycle is pushed or carried; never together with SOFT_RESTRICTED
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,9 @@ _HIGHWAY = {
     "bridleway": Highway.PATH,
     "pedestrian": Highway.PEDESTRIAN,
     "footway": Highway.FOOTWAY,
+    "corridor": Highway.FOOTWAY,
+    "platform": Highway.FOOTWAY,
+    "steps": Highway.STEPS,
     "secondary": Highway.SECONDARY,
     "primary": Highway.PRIMARY,
     "trunk": Highway.TRUNK,
@@ -130,11 +135,14 @@ _UNRIDEABLE_SMOOTHNESS = {"horrible", "very_horrible", "impassable"}
 _BICYCLE_PERMITTED = {"yes", "designated", "permissive"}
 _BICYCLE_DISCOURAGED = {"no", "use_sidepath", "dismount"}
 _ACCESS_CLOSED = {"no", "military"}
+_FOOT_PERMITTED = {"yes", "designated", "permissive"}
+# Ways that exist only for pedestrians, whatever the bicycle tags say.
+_WALK_ONLY_HIGHWAYS = {"steps", "corridor", "platform"}
 _ACCESS_SOFT = {"private", "destination", "delivery", "customers"}
 _VEHICLE_SOFT = {"no", "private"}
 _ONEWAY_FORWARD = {"yes", "1", "true"}
 _ONEWAY_BACKWARD = {"-1", "reverse"}
-_ONEWAY_IGNORED_ON = {Highway.FOOTWAY, Highway.PATH, Highway.PEDESTRIAN}
+_ONEWAY_IGNORED_ON = {Highway.FOOTWAY, Highway.PATH, Highway.PEDESTRIAN, Highway.STEPS}
 _CYCLEWAY_KEYS = ("cycleway", "cycleway:left", "cycleway:right", "cycleway:both")
 _CYCLEWAY_INFRA = {"lane", "track", "shared_lane", "share_busway", "opposite_lane", "opposite_track"}
 
@@ -152,8 +160,11 @@ def classify_way(tags: Mapping[str, str]) -> EdgeAttrs | None:
     bicycle = tags.get("bicycle")
     permitted = bicycle in _BICYCLE_PERMITTED
     access = tags.get("access")
-    if access in _ACCESS_CLOSED and not permitted:
+    closed = access in _ACCESS_CLOSED and not permitted
+    # Closed to bicycles but open to pedestrians: stays in the graph, on foot.
+    if closed and tags.get("foot") not in _FOOT_PERMITTED:
         return None
+    dismount = closed or tags["highway"] in _WALK_ONLY_HIGHWAYS or bicycle == "dismount"
 
     flags = _direction_flags(tags, highway)
     soft = not permitted and (
@@ -162,7 +173,9 @@ def classify_way(tags: Mapping[str, str]) -> EdgeAttrs | None:
         or bicycle in _BICYCLE_DISCOURAGED
         or highway == Highway.FOOTWAY
     )
-    if soft:
+    if dismount:
+        flags |= DISMOUNT
+    elif soft:
         flags |= SOFT_RESTRICTED
     if tags.get("ford") == "yes":
         flags |= FORD
@@ -170,7 +183,7 @@ def classify_way(tags: Mapping[str, str]) -> EdgeAttrs | None:
         flags |= BRIDGE
     if tags.get("tunnel", "no") != "no":
         flags |= TUNNEL
-    if (
+    if not dismount and (
         highway == Highway.CYCLEWAY
         or bicycle == "designated"
         or any(tags.get(key) in _CYCLEWAY_INFRA for key in _CYCLEWAY_KEYS)

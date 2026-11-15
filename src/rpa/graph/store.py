@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 # Geometry is stored as integer degrees * 1e7, the native OSM precision.
 COORD_SCALE = 1e7

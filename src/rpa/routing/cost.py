@@ -32,6 +32,7 @@ _ROAD_CLASS_PENALTY = {
     Highway.SECONDARY: 0.5,
     Highway.PRIMARY: 1.2,
     Highway.TRUNK: 3.0,
+    Highway.STEPS: 0.3,
 }
 
 _INF = float("inf")
