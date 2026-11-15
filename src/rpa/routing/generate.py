@@ -22,7 +22,7 @@ from rpa.routing.geo import destination
 from rpa.routing.path import build_path
 from rpa.routing.score import Candidate, features, rejection, score
 from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
-from rpa.routing.trim import trim_spurs
+from rpa.routing.trim import tidy, trim_spurs
 from rpa.routing.walk import route_through
 
 # First guess at how much longer roads are than the straight line between two points.
@@ -30,6 +30,9 @@ DETOUR = 1.3
 VIA_COUNTS = (1, 2, 3)
 N_BEARINGS = 12
 MAX_FIT_ITERATIONS = 5
+# A closed sub-walk this short (a block circled on the way to a via) is cut out of the route.
+APPENDIX_SHARE = 0.07  # of the target length
+MIN_APPENDIX_M = 1000.0
 # A via node must be a real junction, or the walk would have to turn back at it.
 MIN_VIA_DEGREE = 3
 MIN_SNAP_RADIUS_M = 300.0
@@ -214,6 +217,11 @@ def _loops(
         return [walk for walk in pool.map(attempt, attempts) if walk is not None]
 
 
+def _max_appendix_m(target_m: float) -> float:
+    """Longest closed sub-walk that is cut out of a route as an appendix."""
+    return max(MIN_APPENDIX_M, APPENDIX_SHARE * target_m)
+
+
 def _fit_loop(
     engine: Engine,
     w: np.ndarray,
@@ -227,21 +235,24 @@ def _fit_loop(
 ) -> Walk | None:
     """Resize one polygon until the walk around it has an acceptable length."""
     target_m = length.target * 1000
+    max_loop_m = _max_appendix_m(target_m)
     scale = 1.0
     for _ in range(MAX_FIT_ITERATIONS):
         vias = _polygon_vias(engine, nice, usable, must, start, target_m * scale / DETOUR, n_vias, bearing)
         if vias is None:
             return None
+        # The corner opposite the start is the one placed at a wanted node.
+        opposite = vias[(n_vias + 1) // 2 - 1]
+        keep = frozenset({opposite}) if must is not None else frozenset()
         arcs = route_through(engine, w, [start, *vias, start])
         if arcs is None:
             return None
-        arcs = trim_spurs(arcs)
+        arcs = tidy(arcs, engine.arc_tail, engine.arc_head, engine.length, max_loop_m, keep)
         metres = _metres(engine, arcs)
         if metres == 0.0:
             return None
         if length.min * 1000 <= metres <= length.max * 1000:
-            # The corner opposite the start is the one placed at a wanted node.
-            return arcs, (vias[(n_vias + 1) // 2 - 1] if must is not None else None)
+            return arcs, (opposite if must is not None else None)
         scale *= target_m / metres
     return None
 
@@ -363,6 +374,7 @@ def _detours(
     east = (lonlat[:, 0] - mid_lon) * math.cos(math.radians(mid_lat))
     sector = (np.degrees(np.arctan2(east, lonlat[:, 1] - mid_lat)) % 360 // (360 / N_BEARINGS)).astype(np.int8)
     target_m = length.target * 1000
+    max_appendix_m = _max_appendix_m(target_m)
 
     def attempt(which: int) -> Walk | None:
         in_sector = sector == which
@@ -381,7 +393,9 @@ def _detours(
                 via = _nicest(engine, nice, band, mid_lon, mid_lat)
             if before is None:
                 arcs = route_through(engine, w, [start, via, end])
-                arcs = trim_spurs(arcs) if arcs is not None else None
+                if arcs is not None:
+                    keep = frozenset({via}) if must is not None else frozenset()
+                    arcs = tidy(arcs, engine.arc_tail, engine.arc_head, engine.length, max_appendix_m, keep)
             else:
                 arcs = _walk_via_place(engine, w, [before, start, via, end], start)
             if arcs is None:

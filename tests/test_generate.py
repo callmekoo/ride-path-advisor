@@ -8,7 +8,7 @@ from helpers import with_walked_cut
 from rpa.routing.cost import Prefs
 from rpa.routing.diversity import core_edges, overlap
 from rpa.routing.engine import Engine
-from rpa.routing.generate import generate
+from rpa.routing.generate import APPENDIX_SHARE, MIN_APPENDIX_M, generate
 from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
 
 
@@ -33,6 +33,21 @@ def assert_sound(engine: Engine, arcs: np.ndarray, start: int, end: int) -> None
     assert (engine.arc_head[arcs[:-1]] == engine.arc_tail[arcs[1:]]).all()
     assert not (arcs[1:] == (arcs[:-1] ^ 1)).any()
     assert np.isfinite(engine.weights(Prefs())[arcs]).all()
+
+
+@pytest.mark.parametrize("km", [8.0, 16.0])
+def test_loops_have_no_small_closed_sub_walks(grid, grid_engine, km):
+    limit = max(MIN_APPENDIX_M, APPENDIX_SHARE * km * 1000)
+    for candidate in generate(grid_engine, loop_spec(grid, 10, 10, km)):
+        arcs = candidate.path.arcs
+        last_at: dict[int, float] = {int(grid_engine.arc_tail[arcs[0]]): 0.0}
+        ridden = 0.0
+        for i, arc in enumerate(arcs.tolist()):
+            ridden += float(grid_engine.length[arc >> 1])
+            head = int(grid_engine.arc_head[arc])
+            if head in last_at and i < len(arcs) - 1:
+                assert ridden - last_at[head] > limit
+            last_at[head] = ridden
 
 
 @pytest.mark.parametrize("km", [8.0, 16.0, 24.0])

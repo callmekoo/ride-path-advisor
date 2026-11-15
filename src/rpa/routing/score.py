@@ -2,7 +2,7 @@
 
 Arc weights steer the search one road at a time. The score looks at the whole
 route and sees what a single arc cannot: retraced road, missed length, how
-twisty the result is. The numbers here are starting points for tuning.
+twisty the result is, how often it crosses itself. The numbers here are starting points for tuning.
 
 The cost ratio only says how good a kilometre is, not how much the route costs
 in all. When a length was asked for, the length band already bounds the total;
@@ -30,6 +30,9 @@ MAX_UNPAVED_SHARE_ON_PAVED = 0.10
 EXTRA_COST_PENALTY = 60.0
 # A short route with a couple of turns would otherwise count hundreds of turns per 10 km.
 MAX_TURN_PENALTY = 20.0
+# Each place where the route comes back to a node it has passed costs this, up to MAX_COUNTED_CROSSINGS.
+CROSSING_PENALTY = 8.0
+MAX_COUNTED_CROSSINGS = 3
 
 
 @dataclass(frozen=True)
@@ -45,6 +48,7 @@ class Features:
     forest_share: float = 0.0  # 0 when the graph has no land cover
     ascent_m: float = 0.0  # 0 when the graph has no elevation
     walk_m: float = 0.0  # metres where the bicycle is walked; an edge passed twice counts twice
+    crossings: int = 0  # arrivals at a node already passed; a shared stretch counts once
 
     @property
     def cost_m(self) -> float:
@@ -90,7 +94,28 @@ def features(engine: Engine, w: np.ndarray, arcs: np.ndarray, length: LengthKm |
         forest_share=forest_m / total,
         ascent_m=climb_m(profile[1]) if profile is not None else 0.0,
         walk_m=walk_m,
+        crossings=_count_crossings(engine, arcs),
     )
+
+
+def _count_crossings(engine: Engine, arcs: np.ndarray) -> int:
+    """Arrivals at a node the route has already passed.
+
+    Not counted: the closing arc back to the start, and an arrival right after another
+    repeated node, which only continues a stretch already counted.
+    """
+    heads = engine.arc_head[arcs].tolist()
+    seen = {int(engine.arc_tail[arcs[0]])}
+    crossings = 0
+    after_repeat = False
+    for i, head in enumerate(heads):
+        repeated = head in seen
+        closes_ring = i == len(heads) - 1 and head == int(engine.arc_tail[arcs[0]])
+        if repeated and not after_repeat and not closes_ring:
+            crossings += 1
+        after_repeat = repeated
+        seen.add(head)
+    return crossings
 
 
 def _count_turns(engine: Engine, arcs: np.ndarray) -> int:
@@ -134,6 +159,7 @@ def score(f: Features, length: LengthKm | None, cheapest_cost_m: float | None = 
     value -= min(0.5 * max(0.0, f.turns_per_10km - 15.0), MAX_TURN_PENALTY)
     if not length and cheapest_cost_m is not None and f.cost_m > 0.0:
         value -= EXTRA_COST_PENALTY * (1.0 - cheapest_cost_m / f.cost_m)
+    value -= CROSSING_PENALTY * min(f.crossings, MAX_COUNTED_CROSSINGS)
     return max(value, 0.0)
 
 

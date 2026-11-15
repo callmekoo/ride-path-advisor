@@ -3,7 +3,7 @@ import dataclasses
 import numpy as np
 import pytest
 
-from helpers import with_edge
+from helpers import arcs_via, node, square, with_edge
 
 from rpa.osm.tags import DISMOUNT, Highway, Surface
 from rpa.routing.cost import Prefs
@@ -11,6 +11,8 @@ from rpa.routing.diversity import overlap, select_diverse
 from rpa.routing.engine import Engine
 from rpa.routing.path import build_path
 from rpa.routing.score import (
+    CROSSING_PENALTY,
+    MAX_COUNTED_CROSSINGS,
     EXTRA_COST_PENALTY,
     MAX_TURN_PENALTY,
     Candidate,
@@ -22,28 +24,6 @@ from rpa.routing.score import (
 from rpa.routing.spec import LengthKm, Point, RouteSpec
 
 START = Point(lon=60.0, lat=56.8)
-
-
-def node(i: int, j: int) -> int:
-    return j * 21 + i
-
-
-def arcs_via(engine: Engine, *nodes: int) -> np.ndarray:
-    """Arcs along straight grid lines through the given corner nodes."""
-    result = []
-    for a, b in zip(nodes[:-1], nodes[1:]):
-        step = 1 if abs(b - a) < 21 else 21
-        step = step if b > a else -step
-        for tail in range(a, b, step):
-            match = np.flatnonzero((engine.arc_tail == tail) & (engine.arc_head == tail + step))
-            result.append(int(match[0]))
-    return np.array(result, dtype=np.uint32)
-
-
-def square(engine: Engine, i: int, j: int, size: int) -> np.ndarray:
-    return arcs_via(
-        engine, node(i, j), node(i + size, j), node(i + size, j + size), node(i, j + size), node(i, j)
-    )
 
 
 def test_features_of_a_clean_square_loop(grid_engine):
@@ -204,3 +184,45 @@ def test_zero_length_route_gets_no_extra_cost_deduction():
 def test_turn_penalty_is_capped():
     twisty = Features(500.0, 0.0, 0.0, 1.0, 10_000.0, 0.0, 0.0)
     assert score(twisty, None) == pytest.approx(100.0 - MAX_TURN_PENALTY)
+
+
+def crossings_of(engine, arcs):
+    return features(engine, engine.weights(Prefs()), arcs, None).crossings
+
+
+def test_a_clean_square_has_no_crossings(grid_engine):
+    assert crossings_of(grid_engine, square(grid_engine, 2, 2, 4)) == 0
+
+
+def test_a_figure_eight_crosses_itself_once(grid_engine):
+    # Two squares sharing the corner (4, 4), ridden from a start away from that corner.
+    eight = np.concatenate([
+        arcs_via(grid_engine, node(4, 4), node(8, 4), node(8, 8), node(4, 8), node(4, 4)),
+        arcs_via(grid_engine, node(4, 4), node(0, 4), node(0, 0), node(4, 0), node(4, 4)),
+    ])
+    shifted = np.concatenate([eight[2:], eight[:2]])
+    assert crossings_of(grid_engine, shifted) == 1
+
+
+def test_a_shared_stretch_counts_once(grid_engine):
+    # Out along y=2 and x=6, then back down x=6 and on along y=2: the stretch is shared, met once.
+    route = arcs_via(
+        grid_engine, node(2, 2), node(6, 2), node(6, 6), node(8, 6), node(8, 4), node(6, 4), node(6, 2)
+    )
+    route = np.concatenate([route, arcs_via(grid_engine, node(6, 2), node(2, 2))])
+    assert crossings_of(grid_engine, route) == 1
+
+
+def test_out_and_back_crosses_once(grid_engine):
+    out = arcs_via(grid_engine, node(2, 2), node(5, 2))
+    back = arcs_via(grid_engine, node(5, 2), node(2, 2))
+    assert crossings_of(grid_engine, np.concatenate([out, back])) == 1
+
+
+def test_crossings_lower_the_score_up_to_a_cap():
+    base = Features(8000.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
+    clean = score(base, None)
+    assert score(dataclasses.replace(base, crossings=1), None) == pytest.approx(clean - CROSSING_PENALTY)
+    assert score(dataclasses.replace(base, crossings=10), None) == pytest.approx(
+        clean - CROSSING_PENALTY * MAX_COUNTED_CROSSINGS
+    )

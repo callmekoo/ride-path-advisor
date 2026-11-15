@@ -59,6 +59,7 @@ def test_loop_request_returns_distinct_closed_candidates(client, grid):
         assert line["coordinates"][0] == line["coordinates"][-1] == pytest.approx(list(at(grid, 10, 10).values()))
         assert candidate["title"].startswith("Кольцо")
         assert candidate["features"]["repeat_share"] <= 0.05
+        assert "crossings" in candidate["features"]
         assert candidate["km_by_highway"] == {"residential": pytest.approx(candidate["length_km"], abs=0.01)}
         assert candidate["profile"] is None and candidate["ascent_m"] is None
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from rpa.graph.store import GraphData
+from rpa.routing.engine import Engine
 
 MICRO = Path(__file__).parent / "fixtures" / "micro.opl"
 
@@ -94,3 +95,25 @@ def with_walked_cut(g: GraphData, i: int, open_rows: range = range(0, 2)) -> Gra
     flags = g.edge_flags.copy()
     flags[cut] |= DISMOUNT
     return dataclasses.replace(g, edge_flags=flags)
+
+
+def node(i: int, j: int) -> int:
+    return j * 21 + i
+
+
+def arcs_via(engine: Engine, *nodes: int) -> np.ndarray:
+    """Arcs along straight grid lines through the given corner nodes."""
+    result = []
+    for a, b in zip(nodes[:-1], nodes[1:]):
+        step = 1 if abs(b - a) < 21 else 21
+        step = step if b > a else -step
+        for tail in range(a, b, step):
+            match = np.flatnonzero((engine.arc_tail == tail) & (engine.arc_head == tail + step))
+            result.append(int(match[0]))
+    return np.array(result, dtype=np.uint32)
+
+
+def square(engine: Engine, i: int, j: int, size: int) -> np.ndarray:
+    return arcs_via(
+        engine, node(i, j), node(i + size, j), node(i + size, j + size), node(i, j + size), node(i, j)
+    )
