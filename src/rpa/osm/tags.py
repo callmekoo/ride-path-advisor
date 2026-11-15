@@ -147,8 +147,9 @@ _CYCLEWAY_KEYS = ("cycleway", "cycleway:left", "cycleway:right", "cycleway:both"
 _CYCLEWAY_INFRA = {"lane", "track", "shared_lane", "share_busway", "opposite_lane", "opposite_track"}
 
 
-def _is_railway_platform(tags: Mapping[str, str]) -> bool:
-    return tags.get("railway") == "platform" or tags.get("public_transport") == "platform"
+def is_bare_platform(tags: Mapping[str, str]) -> bool:
+    """A railway platform mapped without a `highway` tag."""
+    return not tags.get("highway") and (tags.get("railway") == "platform" or tags.get("public_transport") == "platform")
 
 
 def classify_way(tags: Mapping[str, str]) -> EdgeAttrs | None:
@@ -157,7 +158,7 @@ def classify_way(tags: Mapping[str, str]) -> EdgeAttrs | None:
     A railway platform mapped without a `highway` tag counts as `highway=platform`;
     when `highway` is present it alone decides.
     """
-    highway_tag = tags.get("highway") or ("platform" if _is_railway_platform(tags) else "")
+    highway_tag = tags.get("highway") or ("platform" if is_bare_platform(tags) else "")
     highway = _HIGHWAY.get(highway_tag.removesuffix("_link"))
     if highway is None:
         return None

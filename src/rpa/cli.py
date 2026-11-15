@@ -250,7 +250,7 @@ def match_command(
     pbf: Annotated[Path | None, typer.Option(help="Файл OSM, из которого собран граф")] = None,
 ) -> None:
     """Привязать импортированные треки к дорогам и посчитать заезды по каждому ребру графа."""
-    from rpa.match.matcher import build_tiles, match_tracks, save_matched
+    from rpa.match.matcher import build_tiles, match_tracks, save_matched, tiles_stamp
     from rpa.tracks.store import load_tracks
 
     if not (config.tracks_dir() / "tracks.json").exists():
@@ -264,10 +264,10 @@ def match_command(
     sha = _sha256(source)
     stamp = config.valhalla_dir() / "source_sha256"
     valhalla_config = config.valhalla_dir() / "valhalla.json"
-    if not valhalla_config.exists() or not stamp.exists() or stamp.read_text() != sha:
+    if not valhalla_config.exists() or not stamp.exists() or stamp.read_text() != tiles_stamp(sha):
         typer.echo("Собираю тайлы Valhalla (около минуты)")
         valhalla_config = build_tiles(source, config.valhalla_dir())
-        stamp.write_text(sha)
+        stamp.write_text(tiles_stamp(sha))
     if load_graph(directory)[1].get("source_sha256") != sha:
         typer.echo("Внимание: граф собран из другого файла OSM; пересоберите его: rpa build-graph", err=True)
 

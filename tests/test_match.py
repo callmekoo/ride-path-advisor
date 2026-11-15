@@ -3,7 +3,18 @@ import osmium
 import pytest
 from helpers import MICRO, edge_index
 
-from rpa.match.matcher import Matched, build_tiles, decode_polyline6, load_matched, match_tracks, save_matched
+from rpa.match.matcher import (
+    TILES_RECIPE,
+    Matched,
+    build_tiles,
+    decode_polyline6,
+    load_matched,
+    match_tracks,
+    save_matched,
+    tiles_stamp,
+    walkable_platforms,
+)
+from rpa.osm.build import build_graph
 from rpa.match.project import project
 from rpa.tracks.store import make_trackset
 
@@ -108,3 +119,68 @@ def test_a_noisy_track_is_matched_to_the_ways_it_followed(micro, valhalla_config
     assert rides[edge_index(micro, 1, 3)] == 1
     assert rides[edge_index(micro, 3, 6)] == 1
     assert rides.sum() == 2
+
+
+# A footbridge reached by stairs, crossing over a platform that has no `highway` tag.
+BRIDGE_NODES = "".join(f"n{i} x60.00{2 * i} y56.8\n" for i in range(1, 7))
+BRIDGE_MAP = (
+    BRIDGE_NODES
+    + "w1 Thighway=residential Nn1,n2\n"
+    + "w2 Thighway=steps Nn2,n3\n"
+    + "w3 Trailway=platform,public_transport=platform,name=P Nn3,n4\n"
+    + "w4 Thighway=steps Nn4,n5\n"
+    + "w5 Thighway=residential Nn5,n6\n"
+    + "w6 Trailway=rail Nn1,n6\n"
+    + "n7 x60.002 y56.81\nn8 x60.004 y56.81\n"
+    + "w7 Thighway=residential,public_transport=platform Nn7,n8\n"
+)
+
+
+def write_pbf(folder, opl: str, name: str):
+    source = folder / f"{name}.opl"
+    source.write_text(opl)
+    pbf = folder / f"{name}.osm.pbf"
+    with osmium.SimpleWriter(str(pbf)) as writer:
+        for obj in osmium.FileProcessor(str(source)):
+            writer.add(obj)
+    return pbf
+
+
+def read_objects(pbf):
+    return [(obj.type_str(), obj.id, dict(obj.tags) if obj.type_str() != "n" else {}) for obj in osmium.FileProcessor(str(pbf))]
+
+
+def test_walkable_platforms_tags_only_bare_platforms(tmp_path):
+    source = write_pbf(tmp_path, BRIDGE_MAP, "bridge")
+    before = source.read_bytes()
+    target = tmp_path / "copy.osm.pbf"
+
+    assert walkable_platforms(source, target) == 1
+
+    original, copy = read_objects(source), read_objects(target)
+    assert [(t, i) for t, i, _ in copy] == [(t, i) for t, i, _ in original]
+    changed = {(t, i): tags for (t, i, tags), (_, _, old) in zip(copy, original, strict=True) if tags != old}
+    assert changed == {("w", 3): {"railway": "platform", "public_transport": "platform", "name": "P", "highway": "footway"}}
+    assert source.read_bytes() == before
+
+
+def test_tiles_stamp_carries_hash_and_recipe():
+    stamp = tiles_stamp("abc")
+    assert "abc" in stamp and TILES_RECIPE in stamp and stamp != "abc"
+
+
+def test_rides_over_a_bare_platform_are_matched(tmp_path):
+    pbf = write_pbf(tmp_path, BRIDGE_MAP, "bridge")
+    graph = build_graph(tmp_path / "bridge.opl")
+    config_path = build_tiles(pbf, tmp_path)
+    assert not (tmp_path / "platforms.osm.pbf").exists()
+
+    lon = np.linspace(60.002, 60.012, 60)
+    ride = np.stack([lon, np.full(60, 56.8)], axis=1)
+    ride += np.random.default_rng(2).normal(0, 2e-5, ride.shape)
+    tracks = make_trackset([{"id": "t"}], [[ride]])
+
+    result, report = match_tracks(tracks, config_path, jobs=1, log=lambda _: None)
+    assert report.failed == 0
+    assert 3 in set(result.way_id.tolist())
+    assert project(graph, result)[edge_index(graph, 3, 4)] == 1

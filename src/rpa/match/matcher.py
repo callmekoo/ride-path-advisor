@@ -3,6 +3,10 @@
 The result does not depend on our graph: for each stretch of a ride it records
 the OSM way and the two points between which the way was ridden. Projecting
 that onto graph edges is `rpa.match.project`, re-run whenever the graph is rebuilt.
+
+The only thing done to the OSM file Valhalla reads is `walkable_platforms`: railway
+platforms without a `highway` tag are given `highway=footway`, so that Valhalla can
+route over footbridges reached only via stairs and platforms (see there).
 """
 
 import json
@@ -13,9 +17,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import osmium
+import osmium.filter
 import valhalla
 
 from rpa.graph.store import COORD_SCALE
+from rpa.osm.tags import is_bare_platform
 from rpa.tracks.clean import step_m
 from rpa.tracks.store import TrackSet
 
@@ -42,6 +49,40 @@ class MatchReport:
     matched_km: float = 0.0
 
 
+# Recorded next to the source hash: tiles built with another recipe are rebuilt.
+TILES_RECIPE = "platforms-as-footways"
+
+
+def tiles_stamp(source_sha256: str) -> str:
+    """Content of the stamp file saying which OSM file and recipe the tiles were built from."""
+    return f"{source_sha256} {TILES_RECIPE}"
+
+
+def walkable_platforms(source: Path, target: Path) -> int:
+    """Write a copy of `source` where bare railway platforms get `highway=footway`; returns how many.
+
+    Valhalla does not route over a way without a `highway` tag, so a footbridge reached
+    only via stairs and platforms is an island for it and rides over it never match.
+    `highway=platform` does not help either (Valhalla skips it); `highway=footway` does,
+    under the costing the matcher uses. Way ids stay the same, so `project` maps such
+    stretches onto the platform edges of our graph unchanged.
+    """
+    changed = 0
+    with osmium.SimpleWriter(str(target)) as writer:
+        # Only objects carrying a platform tag reach Python; everything else goes to the writer as is.
+        processor = (
+            osmium.FileProcessor(str(source))
+            .with_filter(osmium.filter.KeyFilter("railway", "public_transport"))
+            .handler_for_filtered(writer)
+        )
+        for obj in processor:
+            if obj.is_way() and is_bare_platform(obj.tags):
+                obj = obj.replace(tags={**dict(obj.tags), "highway": "footway"})
+                changed += 1
+            writer.add(obj)
+    return changed
+
+
 def build_tiles(pbf: Path, directory: Path) -> Path:
     """Build Valhalla routing tiles from `pbf` into `directory`; returns the config path."""
     directory = Path(directory)
@@ -53,7 +94,12 @@ def build_tiles(pbf: Path, directory: Path) -> Path:
     config_path = directory / "valhalla.json"
     config_path.write_text(json.dumps(config, indent=1))
     builder = Path(valhalla.PYVALHALLA_DIR) / "bin" / "valhalla_build_tiles"
-    subprocess.run([str(builder), "-c", str(config_path), str(pbf)], check=True, capture_output=True)
+    walkable = directory / "platforms.osm.pbf"
+    try:
+        walkable_platforms(Path(pbf), walkable)
+        subprocess.run([str(builder), "-c", str(config_path), str(walkable)], check=True, capture_output=True)
+    finally:
+        walkable.unlink(missing_ok=True)
     return config_path
 
 
