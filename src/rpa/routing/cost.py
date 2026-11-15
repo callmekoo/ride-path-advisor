@@ -2,6 +2,9 @@
 
     w = length * (1 + road class + unfamiliarity + no forest + hills) * surface_factor * restriction_factor
 
+The restriction factor covers soft-restricted ways and walk-only sections
+(DISMOUNT: stairs, corridors, bicycle=dismount), where the rider pushes the bike.
+
 Every factor is at least 1, so a finite weight never undercuts the edge
 length. The kernel's A* heuristic depends on that. Forbidden arcs get +inf.
 
@@ -14,7 +17,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from rpa.graph.store import GraphData
-from rpa.osm.tags import BACK_OK, CYCLE_INFRA, FORD, FWD_OK, SOFT_RESTRICTED, Highway, Surface
+from rpa.osm.tags import BACK_OK, CYCLE_INFRA, DISMOUNT, FORD, FWD_OK, SOFT_RESTRICTED, Highway, Surface
 
 # Extra metres per metre for riding on a road of this class, before scaling
 # by the rider's wish to avoid major roads.
@@ -29,10 +32,10 @@ _ROAD_CLASS_PENALTY = {
     Highway.PATH: 0.15,
     Highway.PEDESTRIAN: 0.2,
     Highway.FOOTWAY: 0.3,
+    Highway.STEPS: 0.3,
     Highway.SECONDARY: 0.5,
     Highway.PRIMARY: 1.2,
     Highway.TRUNK: 3.0,
-    Highway.STEPS: 0.3,
 }
 
 _INF = float("inf")
@@ -45,6 +48,9 @@ _SURFACE_FACTOR = {
 }
 
 SOFT_RESTRICTION_FACTOR = 3.0
+# Walking the bike: dearer than a soft restriction, cheaper once the rider has walked it before.
+DISMOUNT_FACTOR = 8.0
+WALKED_DISMOUNT_FACTOR = 3.0
 # Having actually ridden a restricted way this many times shows it is passable.
 RIDES_LIFTING_RESTRICTION = 2
 # Extra metres per metre on a never-ridden road at familiarity = 1.
@@ -104,13 +110,17 @@ def arc_weights(
 
     multiplier = 1.0 + major_scale * class_penalty
     restricted = (flags & SOFT_RESTRICTED) > 0
+    dismount = (flags & DISMOUNT) > 0
+    dismount_factor = np.full(g.n_edges, DISMOUNT_FACTOR)
     if rides is not None:
         multiplier = multiplier + UNFAMILIAR_PENALTY * prefs.familiarity * (1.0 - popularity(rides))
         restricted &= rides < RIDES_LIFTING_RESTRICTION
+        dismount_factor[rides >= RIDES_LIFTING_RESTRICTION] = WALKED_DISMOUNT_FACTOR
     if forest is not None:
         multiplier = multiplier + prefs.forest * (1.0 - forest)
     factor = np.array(_SURFACE_FACTOR[prefs.surface])[g.edge_surface]
     factor = factor * np.where(restricted, SOFT_RESTRICTION_FACTOR, 1.0)
+    factor = factor * np.where(dismount, dismount_factor, 1.0)
     factor = factor * np.where(flags & FORD, FORD_FACTOR, 1.0)
 
     length = np.asarray(g.edge_len_m, dtype=np.float64)

@@ -4,8 +4,15 @@ import numpy as np
 import pytest
 from helpers import edge_index
 
-from rpa.osm.tags import CYCLE_INFRA, FORD, Highway, Surface
-from rpa.routing.cost import Prefs, arc_weights
+from rpa.osm.tags import CYCLE_INFRA, DISMOUNT, FORD, Highway, Surface
+from rpa.routing.cost import (
+    DISMOUNT_FACTOR,
+    FORD_FACTOR,
+    MAX_MULTIPLIER,
+    WALKED_DISMOUNT_FACTOR,
+    Prefs,
+    arc_weights,
+)
 
 
 def with_edge(g, e: int, **attrs):
@@ -178,3 +185,55 @@ def test_hill_preferences_depend_on_the_direction_of_travel(micro):
     assert multipliers("any") == pytest.approx((1.0, 1.0))
     assert multipliers("avoid") == pytest.approx((1.5, 1.0))
     assert multipliers("seek") == pytest.approx((1.0, 1.5))
+
+
+def dismount_edge(g):
+    e = edge_index(g, 1, 3)
+    return e, with_edge(g, e, edge_highway=Highway.CYCLEWAY, edge_surface=Surface.PAVED, edge_flags=DISMOUNT)
+
+
+def test_dismount_edge_has_its_own_restriction_factor(micro):
+    e, g = dismount_edge(micro)
+    assert multiplier(g, e, Prefs(avoid_major=0.0, familiarity=0.0, forest=0.0)) == pytest.approx(DISMOUNT_FACTOR)
+
+
+def test_walked_dismount_edge_is_cheaper_after_two_rides(micro):
+    e, g = dismount_edge(micro)
+    prefs = Prefs(avoid_major=0.0, familiarity=0.0, forest=0.0)
+    rides = np.zeros(g.n_edges, dtype=np.uint16)
+    rides[e] = 1
+    assert float(arc_weights(g, prefs, rides)[2 * e]) / float(g.edge_len_m[e]) == pytest.approx(DISMOUNT_FACTOR)
+    rides[e] = 2
+    assert float(arc_weights(g, prefs, rides)[2 * e]) / float(g.edge_len_m[e]) == pytest.approx(WALKED_DISMOUNT_FACTOR)
+
+
+def test_dismount_and_ford_multiply(micro):
+    e, g = dismount_edge(micro)
+    g = with_edge(g, e, edge_flags=FORD)
+    prefs = Prefs(avoid_major=0.0, familiarity=0.0, forest=0.0)
+    assert multiplier(g, e, prefs) == pytest.approx(DISMOUNT_FACTOR * FORD_FACTOR)
+
+
+@pytest.mark.parametrize("surface", ["any", "paved", "prefer_unpaved"])
+@pytest.mark.parametrize("surf_class", list(Surface))
+def test_dismount_weight_is_finite_and_not_below_length(micro, surface, surf_class):
+    e, g = dismount_edge(micro)
+    g = with_edge(g, e, edge_surface=surf_class)
+    w = arc_weights(g, Prefs(surface=surface))
+    length = float(g.edge_len_m[e])
+    if surface == "paved" and surf_class == Surface.BAD:
+        assert np.isinf(w[2 * e]) and np.isinf(w[2 * e + 1])
+    else:
+        assert np.isfinite(w[2 * e]) and np.isfinite(w[2 * e + 1])
+        assert w[2 * e] >= length and w[2 * e + 1] >= length
+
+
+def test_dismount_multiplier_is_capped(micro):
+    e, g = dismount_edge(micro)
+    g = with_edge(g, e, edge_highway=Highway.TRUNK, edge_surface=Surface.UNPAVED, edge_flags=FORD)
+    prefs = Prefs(avoid_major=1.0, surface="paved", familiarity=1.0, forest=1.0, hills="avoid")
+    rides = np.zeros(g.n_edges, dtype=np.uint16)
+    forest = np.zeros(g.n_edges, dtype=np.float32)
+    ascent = np.full((g.n_edges, 2), 100.0, dtype=np.float32)
+    w = arc_weights(g, prefs, rides, forest, ascent)
+    assert float(w[2 * e]) / float(g.edge_len_m[e]) == pytest.approx(MAX_MULTIPLIER)
