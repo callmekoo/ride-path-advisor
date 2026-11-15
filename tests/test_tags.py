@@ -237,3 +237,39 @@ def test_not_walk_only(tags):
 
 def test_footway_bicycle_no_stays_soft_restricted():
     assert classify_way({"highway": "footway", "bicycle": "no"}).flags & SOFT_RESTRICTED
+
+
+PLATFORM_WITHOUT_HIGHWAY = [
+    {"railway": "platform"},
+    {"public_transport": "platform"},
+    {"railway": "platform", "public_transport": "platform"},
+    {"railway": "platform", "access": "no", "foot": "yes"},
+]
+
+
+@pytest.mark.parametrize("tags", PLATFORM_WITHOUT_HIGHWAY)
+def test_platform_without_highway_is_walk_only(tags):
+    attrs = classify_way(tags)
+    assert attrs.highway == Highway.FOOTWAY
+    assert attrs.flags & DISMOUNT
+    assert not attrs.flags & (SOFT_RESTRICTED | CYCLE_INFRA)
+    assert attrs.flags & BOTH == BOTH
+
+
+def test_platform_without_highway_follows_the_other_rules():
+    assert classify_way({"railway": "platform", "surface": "paved"}).surface == Surface.PAVED
+    assert classify_way({"railway": "platform", "access": "no"}) is None
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [{"railway": "rail"}, {"railway": "station"}, {"public_transport": "stop_position"}],
+)
+def test_railway_things_that_are_not_platforms_stay_unroutable(tags):
+    assert classify_way(tags) is None
+
+
+def test_highway_wins_over_platform_tags():
+    attrs = classify_way({"highway": "residential", "public_transport": "platform"})
+    assert attrs.highway == Highway.RESIDENTIAL
+    assert not attrs.flags & DISMOUNT

@@ -186,6 +186,25 @@ def test_footbridge_reached_by_stairs_joins_the_graph(tmp_path):
 
 def test_footbridge_without_stairs_is_an_island_and_dropped(tmp_path):
     path = tmp_path / "island.opl"
-    path.write_text(FOOTBRIDGE_NODES + STREET_AB + BRIDGE_CD + STREET_EF)
+    # The second street is longer (extra node and edge), so it is the largest component.
+    long_street = "n7 x60.007 y56.8\nw5 Thighway=residential Nn5,n6\nw7 Thighway=residential Nn6,n7\n"
+    path.write_text(FOOTBRIDGE_NODES + STREET_AB + BRIDGE_CD + long_street)
     g = build_graph(path)
-    assert not set(g.node_osm_id.tolist()) & {3, 4}
+    nodes = set(g.node_osm_id.tolist())
+    assert not nodes & {3, 4}
+    assert {5, 6, 7} <= nodes
+
+
+def test_railway_platform_without_highway_links_the_stairs(tmp_path):
+    path = tmp_path / "platform.opl"
+    platform = "w3 Trailway=platform,public_transport=platform Nn3,n4\n"
+    rails = "n8 x60.003 y56.9\nn9 x60.004 y56.9\nw6 Trailway=rail Nn8,n9\n"
+    path.write_text(
+        FOOTBRIDGE_NODES + STREET_AB + STAIRS_BC + platform + STAIRS_DE + STREET_EF + rails
+    )
+    g = build_graph(path)
+    g.validate()
+    assert g.node_osm_id.tolist() == [1, 2, 3, 4, 5, 6]
+    edge = edge_index(g, 3, 4)
+    assert g.edge_highway[edge] == Highway.FOOTWAY
+    assert g.edge_flags[edge] & DISMOUNT

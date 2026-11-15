@@ -147,9 +147,18 @@ _CYCLEWAY_KEYS = ("cycleway", "cycleway:left", "cycleway:right", "cycleway:both"
 _CYCLEWAY_INFRA = {"lane", "track", "shared_lane", "share_busway", "opposite_lane", "opposite_track"}
 
 
+def _is_railway_platform(tags: Mapping[str, str]) -> bool:
+    return tags.get("railway") == "platform" or tags.get("public_transport") == "platform"
+
+
 def classify_way(tags: Mapping[str, str]) -> EdgeAttrs | None:
-    """Return routing attributes of a way, or None if a bicycle cannot use it."""
-    highway = _HIGHWAY.get(tags.get("highway", "").removesuffix("_link"))
+    """Return routing attributes of a way, or None if a bicycle cannot use it.
+
+    A railway platform mapped without a `highway` tag counts as `highway=platform`;
+    when `highway` is present it alone decides.
+    """
+    highway_tag = tags.get("highway") or ("platform" if _is_railway_platform(tags) else "")
+    highway = _HIGHWAY.get(highway_tag.removesuffix("_link"))
     if highway is None:
         return None
     # Never rideable, whatever else is tagged. Winter roads cross swamps and
@@ -164,7 +173,7 @@ def classify_way(tags: Mapping[str, str]) -> EdgeAttrs | None:
     # Closed to bicycles but open to pedestrians: stays in the graph, on foot.
     if closed and tags.get("foot") not in _FOOT_PERMITTED:
         return None
-    dismount = closed or tags["highway"] in _WALK_ONLY_HIGHWAYS or bicycle == "dismount"
+    dismount = closed or highway_tag in _WALK_ONLY_HIGHWAYS or bicycle == "dismount"
 
     flags = _direction_flags(tags, highway)
     soft = not permitted and (

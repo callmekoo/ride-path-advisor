@@ -38,7 +38,11 @@ class RawWays:
 
 
 def read_ways(path: Path) -> RawWays:
-    """Collect the bicycle-routable ways of an OSM file (.pbf, .osm, .opl)."""
+    """Collect the bicycle-routable ways of an OSM file (.pbf, .osm, .opl).
+
+    The key filter only narrows the candidates (`highway` ways and railway platforms
+    mapped without `highway`); `classify_way` decides what is routable.
+    """
     refs, xs, ys = array("q"), array("i"), array("i")
     way_off = array("I", [0])
     way_id, highway, surface, flags = array("q"), array("B"), array("B"), array("H")
@@ -47,7 +51,7 @@ def read_ways(path: Path) -> RawWays:
         osmium.FileProcessor(str(path))
         .with_locations()
         .with_filter(osmium.filter.EntityFilter(osmium.osm.WAY))
-        .with_filter(osmium.filter.KeyFilter("highway"))
+        .with_filter(osmium.filter.KeyFilter("highway", "railway", "public_transport"))
     )
     for way in processor:
         attrs = classify_way(dict(way.tags))
