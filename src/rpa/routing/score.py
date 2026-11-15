@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from rpa.enrich.rasters import climb_m
-from rpa.osm.tags import Highway, Surface
+from rpa.osm.tags import DISMOUNT, Highway, Surface
 from rpa.routing.engine import Engine
 from rpa.routing.path import RoutePath
 from rpa.routing.spec import LengthKm, RouteSpec
@@ -35,6 +35,7 @@ class Features:
     ridden_share: float = 0.0  # roads present in the ride history; 0 when there is none
     forest_share: float = 0.0  # 0 when the graph has no land cover
     ascent_m: float = 0.0  # 0 when the graph has no elevation
+    walk_m: float = 0.0  # metres where the bicycle is walked; an edge passed twice counts twice
 
 
 @dataclass
@@ -61,6 +62,7 @@ def features(engine: Engine, w: np.ndarray, arcs: np.ndarray, length: LengthKm |
     surface = np.asarray(engine.g.edge_surface)[edges]
     ridden_m = float(edge_m[engine.rides[edges] > 0].sum()) if engine.rides is not None else 0.0
     forest_m = float((edge_m * engine.forest[edges]).sum()) if engine.forest is not None else 0.0
+    walk_m = float(edge_m[(np.asarray(engine.g.edge_flags)[edges] & DISMOUNT) != 0].sum())
     profile = engine.profile(arcs)
     return Features(
         length_m=total,
@@ -73,6 +75,7 @@ def features(engine: Engine, w: np.ndarray, arcs: np.ndarray, length: LengthKm |
         ridden_share=ridden_m / total,
         forest_share=forest_m / total,
         ascent_m=climb_m(profile[1]) if profile is not None else 0.0,
+        walk_m=walk_m,
     )
 
 

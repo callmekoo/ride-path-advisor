@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
-from helpers import arc_index, node_index
+from helpers import arc_index, edge_index, node_index, with_edge
 
 import rpa_kernel
 from rpa.graph.snap import Snapper
+from rpa.osm.tags import DISMOUNT
 from rpa.routing.cost import Prefs, arc_weights
 from rpa.routing.path import build_path
 
@@ -75,3 +76,60 @@ def test_oneway_makes_the_dead_end_a_trap(micro):
     w = arc_weights(micro, Prefs())
     assert kernel.route(node_index(micro, 4), node_index(micro, 7), w) is not None
     assert kernel.route(node_index(micro, 7), node_index(micro, 4), w) is None
+
+
+def walked(g, *edges: tuple[int, int]):
+    """The micro graph with DISMOUNT on the edges between the given OSM node pairs."""
+    for u, v in edges:
+        g = with_edge(g, edge_index(g, u, v), edge_flags=DISMOUNT)
+    return g
+
+
+def test_no_walked_edges_means_no_spans(micro):
+    assert build_path(micro, arcs_along(micro, 7, 4, 3, 1)).walk_spans == []
+    assert build_path(micro, np.array([], dtype=np.uint32)).walk_spans == []
+
+
+def test_a_walked_edge_in_the_middle_is_one_span_over_its_coordinates(micro):
+    g = walked(micro, (1, 3))
+    path = build_path(g, arcs_along(g, 6, 3, 1, 3, 4))
+    # 6->3 has 3 points, 3->1 has 3, 1->3 has 3, 3->4 has 2: the walked stretches are 3->1 and 1->3.
+    assert path.walk_spans == [(2, 6)]
+    first, last = path.walk_spans[0]
+    np.testing.assert_allclose(path.coords[first], [60.002, 56.800])
+    np.testing.assert_allclose(path.coords[last], [60.002, 56.800])
+
+
+def test_span_points_at_the_edge_also_when_it_is_ridden_backwards(micro):
+    g = walked(micro, (3, 4))
+    path = build_path(g, arcs_along(g, 7, 4, 3, 1))  # 4->3 runs against the stored direction
+    ((first, last),) = path.walk_spans
+    edge = g.edge_geometry(edge_index(g, 3, 4))[::-1]
+    np.testing.assert_allclose(path.coords[first : last + 1], edge)
+    assert 0 < first and last < len(path.coords) - 1
+
+
+def test_neighbouring_walked_edges_merge_into_one_span(micro):
+    g = walked(micro, (1, 3), (3, 4))
+    path = build_path(g, arcs_along(g, 6, 3, 1, 3, 4, 7))
+    # Edges: 6-3 (ridden), 3-1, 1-3, 3-4 (walked), 4-7 (ridden).
+    ((first, last),) = path.walk_spans
+    expected = np.concatenate([
+        g.edge_geometry(edge_index(g, 1, 3))[::-1],
+        g.edge_geometry(edge_index(g, 1, 3))[1:],
+        g.edge_geometry(edge_index(g, 3, 4))[1:],
+    ])
+    np.testing.assert_allclose(path.coords[first : last + 1], expected)
+
+
+def test_a_walked_first_edge_starts_at_index_zero(micro):
+    g = walked(micro, (3, 6))
+    path = build_path(g, arcs_along(g, 6, 3, 1))
+    assert path.walk_spans == [(0, len(g.edge_geometry(edge_index(g, 3, 6))) - 1)]
+
+
+def test_a_walked_last_edge_ends_at_the_last_coordinate(micro):
+    g = walked(micro, (3, 6))
+    path = build_path(g, arcs_along(g, 1, 3, 6))
+    ((first, last),) = path.walk_spans
+    assert last == len(path.coords) - 1 and first == len(g.edge_geometry(edge_index(g, 1, 3))) - 1

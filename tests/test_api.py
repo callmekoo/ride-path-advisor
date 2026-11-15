@@ -1,3 +1,4 @@
+import dataclasses
 import sys
 import xml.etree.ElementTree as ET
 
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from rpa.api.app import create_app
 from rpa.api.jobs import TrackImport
+from rpa.osm.tags import DISMOUNT
 from rpa.routing.engine import Engine
 
 GPX_POINT = "{http://www.topografix.com/GPX/1/1}trk/{http://www.topografix.com/GPX/1/1}trkseg/{http://www.topografix.com/GPX/1/1}trkpt"
@@ -77,6 +79,26 @@ def test_point_to_point_runs_from_start_to_end(client, grid):
     assert coordinates[0] == pytest.approx(list(at(grid, 2, 10).values()))
     assert coordinates[-1] == pytest.approx(list(at(grid, 18, 10).values()))
     assert candidate["length_km"] == pytest.approx(8.0, abs=0.05)
+
+
+def test_walked_stretches_reach_the_response(grid, tmp_path):
+    spec = {"start": at(grid, 2, 10), "end": at(grid, 18, 10), "shape": "p2p", "n_candidates": 1}
+    plain = TestClient(create_app(Engine(grid), tmp_path / "plain.sqlite"))
+    (candidate,) = plain.post("/api/route", json=spec).json()["candidates"]
+    assert candidate["walk_spans"] == [] and candidate["features"]["walk_m"] == 0
+
+    # Walk the whole cross-street cut at i = 10 so that no way round it exists.
+    nodes_u, nodes_v = np.asarray(grid.edge_u), np.asarray(grid.edge_v)
+    cut = np.flatnonzero((nodes_u % 21 == 10) & (nodes_v % 21 == 11))
+    flags = grid.edge_flags.copy()
+    flags[cut] |= DISMOUNT
+    engine = Engine(dataclasses.replace(grid, edge_flags=flags))
+    client = TestClient(create_app(engine, tmp_path / "walk.sqlite"))
+    (candidate,) = client.post("/api/route", json=spec).json()["candidates"]
+
+    assert candidate["features"]["walk_m"] > 0
+    spans = candidate["walk_spans"]
+    assert spans and all(first <= last < len(candidate["geometry"]["coordinates"]) for first, last in spans)
 
 
 def test_malformed_spec_is_rejected(client, grid):

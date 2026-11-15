@@ -1,5 +1,6 @@
 """Shared helpers for tests that work on the micro map (see test_build.py for a sketch)."""
 
+import dataclasses
 from pathlib import Path
 
 import numpy as np
@@ -69,3 +70,13 @@ def grid_graph(nx: int = 21, ny: int = 21, spacing_m: float = 500.0) -> GraphDat
     )
     graph.validate()
     return graph
+
+
+def with_edge(g: GraphData, e: int, **attrs) -> GraphData:
+    """A copy of the graph where edge `e` gets the given highway/surface/extra flags."""
+    changes = {}
+    for name, value in attrs.items():
+        array = getattr(g, name).copy()
+        array[e] = array[e] | value if name == "edge_flags" else value
+        changes[name] = array
+    return dataclasses.replace(g, **changes)

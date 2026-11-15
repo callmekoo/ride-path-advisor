@@ -61,6 +61,7 @@ class CandidateBody(BaseModel):
     km_by_highway: dict[str, float]
     km_by_surface: dict[str, float]
     profile: Profile | None
+    walk_spans: list[tuple[int, int]] = []  # (first, last) coordinate indices of walked stretches
 
 
 class CandidateOut(CandidateBody):

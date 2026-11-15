@@ -376,6 +376,7 @@ def _body(candidate: Candidate, spec: RouteSpec) -> CandidateBody:
         km_by_highway={name: round(value, 3) for name, value in path.km_by_highway.items()},
         km_by_surface={name: round(value, 3) for name, value in path.km_by_surface.items()},
         profile=_thin_profile(candidate.profile),
+        walk_spans=path.walk_spans,
     )
 
 

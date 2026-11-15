@@ -1,8 +1,6 @@
-import dataclasses
-
 import numpy as np
 import pytest
-from helpers import edge_index
+from helpers import edge_index, with_edge
 
 from rpa.osm.tags import CYCLE_INFRA, DISMOUNT, FORD, Highway, Surface
 from rpa.routing.cost import (
@@ -13,16 +11,6 @@ from rpa.routing.cost import (
     Prefs,
     arc_weights,
 )
-
-
-def with_edge(g, e: int, **attrs):
-    """A copy of the graph where edge `e` gets the given highway/surface/extra flags."""
-    changes = {}
-    for name, value in attrs.items():
-        array = getattr(g, name).copy()
-        array[e] = array[e] | value if name == "edge_flags" else value
-        changes[name] = array
-    return dataclasses.replace(g, **changes)
 
 
 def multiplier(g, e: int, prefs: Prefs) -> float:

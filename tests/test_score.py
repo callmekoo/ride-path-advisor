@@ -3,7 +3,9 @@ import dataclasses
 import numpy as np
 import pytest
 
-from rpa.osm.tags import Highway, Surface
+from helpers import with_edge
+
+from rpa.osm.tags import DISMOUNT, Highway, Surface
 from rpa.routing.cost import Prefs
 from rpa.routing.diversity import overlap, select_diverse
 from rpa.routing.engine import Engine
@@ -73,6 +75,22 @@ def test_shares_by_road_class_and_surface(grid):
     f = features(engine, engine.weights(Prefs()), square(engine, 2, 2, 4), None)
     assert f.major_share == pytest.approx(1.0)
     assert f.unpaved_share == pytest.approx(1.0)
+
+
+def test_walk_m_is_the_length_of_the_walked_edges(grid):
+    plain = Engine(grid)
+    arcs = arcs_via(plain, node(2, 2), node(6, 2))
+    assert features(plain, plain.weights(Prefs()), arcs, None).walk_m == 0.0
+
+    edge = int(arcs[1] >> 1)
+    engine = Engine(with_edge(grid, edge, edge_flags=DISMOUNT))
+    f = features(engine, engine.weights(Prefs()), arcs, None)
+    assert f.walk_m == pytest.approx(float(grid.edge_len_m[edge]))
+
+    there_and_back = np.concatenate([arcs, (arcs ^ 1)[::-1]])
+    assert features(engine, engine.weights(Prefs()), there_and_back, None).walk_m == pytest.approx(
+        2 * float(grid.edge_len_m[edge])
+    )
 
 
 def test_empty_route_has_neutral_features(grid_engine):
