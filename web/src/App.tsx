@@ -310,6 +310,12 @@ export function App() {
   }, [showingSaved, opened, result]);
   const chosen = shown[showingSaved ? 0 : selected];
   const chosenIndex = showingSaved ? 0 : selected;
+  /** Choose a route and bring the whole of it into view; choosing it again re-centres the map. */
+  const select = (index: number) => {
+    setSelected(index);
+    const line = shown[index]?.body.geometry.coordinates;
+    if (line && line.length > 0) setFrame(bounds([line]));
+  };
 
   const lines = useMemo(() => shown.map((route) => route.body.geometry.coordinates), [shown]);
   const walk = useMemo(
@@ -337,7 +343,7 @@ export function App() {
       gpxUrl={route.gpxUrl}
       canSave={route.candidateId !== null}
       saved={route.candidateId !== null && route.candidateId in savedAs}
-      onSelect={() => setSelected(index)}
+      onSelect={() => select(index)}
       onSave={() => route.candidateId !== null && void onSave(route.candidateId)}
     />
   ));
@@ -426,7 +432,7 @@ export function App() {
         routes={lines}
         walk={walk}
         selected={chosenIndex}
-        onSelect={setSelected}
+        onSelect={select}
         onClick={onMapClick}
         options={options}
         onOption={onOption}
