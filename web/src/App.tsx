@@ -210,8 +210,9 @@ export function App() {
   };
 
   const onReset = () => {
-    // The marker stays where the last route started, so the next request starts there too.
-    setClick(click ?? result?.spec.start ?? null);
+    // A new route starts from scratch: the next request takes the default place or a fresh click.
+    setClick(null);
+    setSelected(0);
     setPending(null);
     setTurn(null);
     setResult(null);
