@@ -291,6 +291,63 @@
 **Проверка:** `uv run pytest -q tests/test_score.py tests/test_generate.py tests/test_eval.py`,
 затем `uv run pytest -q`. `uv run rpa eval` на реальном графе запускает основная сессия.
 
+### Задача 7. Платформы в тайлах Valhalla и перепривязка — *Sonnet*, реальные данные — основная сессия
+
+Хвост этапа. Valhalla не привязывала заезды к мосту у Перегона: в её графе платформы
+`railway=platform` без `highway` не маршрутизируются, и мост для неё — остров (даже пешеходным
+профилем выходило 10,9 км в объезд вместо 210 м). Опыт на вырезке вокруг станции показал:
+с `highway=platform` Valhalla всё равно не проходит, а с `highway=footway` проходит тем же
+профилем, которым привязываются треки (`bicycle` + `ignore_oneways` + `ignore_access`).
+Идентификаторы путей при этом не меняются, поэтому `match/project.py` кладёт такие отрезки на
+рёбра платформ нашего графа без правок.
+
+**Файлы:** `src/rpa/osm/tags.py`, `src/rpa/match/matcher.py`, `src/rpa/cli.py`,
+`tests/test_match.py`, `tests/test_tags.py` (если меняется имя помощника).
+
+**Интерфейс:**
+- `rpa.osm.tags.is_bare_platform(tags) -> bool` — путь без тега `highway` с
+  `railway=platform` или `public_transport=platform`. Это нынешнее правило из `classify_way`
+  (`_is_railway_platform` плюс проверка отсутствия `highway`), вынесенное под одним именем;
+  `classify_way` пользуется им же, поведение `classify_way` не меняется.
+- `rpa.match.matcher.walkable_platforms(source: Path, target: Path) -> int` — копия файла OSM,
+  в которой путям с `is_bare_platform` дописан тег `highway=footway` (остальные теги пути
+  сохраняются); всё прочее — узлы, остальные пути, отношения — переносится без изменений и в
+  том же порядке. Возвращает число изменённых путей. Не-кандидаты не должны проходить через
+  Python по одному: в pyosmium для этого есть `FileProcessor(...).with_filter(...)
+  .handler_for_filtered(writer)` (объекты, не прошедшие фильтр, уходят в `writer` напрямую);
+  файл региона — 210 МБ.
+- `build_tiles(pbf, directory)` собирает тайлы из такой копии (`directory / "platforms.osm.pbf"`)
+  и удаляет её после сборки, в том числе при ошибке. Исходный файл не трогается.
+- `rpa.match.matcher.TILES_RECIPE = "platforms-as-footways"` и
+  `tiles_stamp(source_sha256: str) -> str` — строка отметки `data/valhalla/source_sha256`:
+  хеш файла и рецепт. `match_command` сравнивает и записывает именно её, так что тайлы,
+  собранные прежним способом (в отметке только хеш), пересобираются один раз.
+- В комментарии у `walkable_platforms` — почему `footway`, а не `platform` (см. выше).
+
+**Тесты (`tests/test_match.py`):**
+- `walkable_platforms` на карте из `tmp_path` (`.opl` → pbf тем же приёмом, что в фикстуре
+  `valhalla_config`): платформа без `highway` получает `highway=footway` и сохраняет прочие
+  теги; путь с `highway=residential` + `public_transport=platform`, рельсы `railway=rail` и
+  обычная улица не меняются; число узлов и путей и их идентификаторы в копии те же; функция
+  возвращает число изменённых путей; исходный файл не изменён.
+- Сквозной с Valhalla: карта «улица A–B, лестница B–C, платформа C–D (`railway=platform`, без
+  `highway`), лестница D–E, улица E–F», трек вдоль всей цепочки с небольшим шумом;
+  `build_tiles` → `match_tracks` → идентификатор пути платформы есть среди привязанных;
+  `project` на граф той же карты (`rpa.osm.build.build_graph`) даёт заезд на ребре платформы.
+  После `build_tiles` файла `platforms.osm.pbf` в каталоге нет. Этот тест должен падать без
+  правки `build_tiles`.
+- `tiles_stamp("abc")` содержит хеш, содержит `TILES_RECIPE` и не равен голому хешу.
+- Существующий `test_a_noisy_track_is_matched_to_the_ways_it_followed` проходит без правок.
+
+**Проверка:** `uv run pytest -q tests/test_match.py tests/test_tags.py tests/test_cli.py`, затем
+`uv run pytest -q`.
+
+**Реальные данные (основная сессия):** копия `data/match/matched.npz` на время сверки;
+`uv run rpa match` (тайлы пересоберутся по новой отметке); сверка счётчиками: появились ли
+заезды на мосту и платформах у Перегона, сколько платформ получили заезды всего (не утянула ли
+привязка заезды с дорог на платформы автобусных остановок), километры проеханных дорог и
+привязанная доля до и после; `uv run rpa eval`.
+
 ### Задача 6. Документы и слияние — *основная сессия*
 
 - `docs/roadmap.md`: строка M9 в таблице этапов; «Что построено» (граф: лестницы больше не
