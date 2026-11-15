@@ -19,6 +19,8 @@ export interface MapViewProps {
   routes: LonLat[][];
   /** Index of the chosen route: drawn on top and thicker. */
   selected: number;
+  /** Walked stretches of the chosen route: a light dashed line over it. */
+  walk: LonLat[][];
   onSelect(index: number): void;
   /** A click on the map that hit neither a route nor an option. */
   onClick(point: Point): void;
@@ -49,7 +51,7 @@ const filters = (selected: number) => ({
 });
 
 export function MapView(props: MapViewProps) {
-  const { frame, start, finish, routes, selected, options, hover, heatmap, children } = props;
+  const { frame, start, finish, routes, walk, selected, options, hover, heatmap, children } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibre | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -75,6 +77,7 @@ export function MapView(props: MapViewProps) {
 
     map.on("load", () => {
       map.addSource("map-routes", { type: "geojson", data: EMPTY });
+      map.addSource("map-walk", { type: "geojson", data: EMPTY });
       map.addSource("map-hover", { type: "geojson", data: EMPTY });
       const line = { "line-join": "round", "line-cap": "round" } as const;
       map.addLayer({
@@ -97,6 +100,13 @@ export function MapView(props: MapViewProps) {
         source: "map-routes",
         layout: line,
         paint: { "line-color": ["get", "colour"], "line-width": 6, "line-opacity": 0.95 },
+      });
+      map.addLayer({
+        id: "map-routes-walk",
+        type: "line",
+        source: "map-walk",
+        layout: { "line-join": "round" },
+        paint: { "line-color": "#ffffff", "line-width": 3, "line-dasharray": [1.5, 1.5] },
       });
       map.addLayer({
         id: "map-hover",
@@ -157,6 +167,16 @@ export function MapView(props: MapViewProps) {
     map.setFilter("map-routes-casing", chosen);
     map.setFilter("map-routes-selected", chosen);
   }, [loaded, routes, selected]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    const data: FeatureCollection = {
+      type: "FeatureCollection",
+      features: walk.map((coordinates) => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } })),
+    };
+    (map.getSource("map-walk") as GeoJSONSource).setData(data);
+  }, [loaded, walk]);
 
   useEffect(() => {
     const map = mapRef.current;

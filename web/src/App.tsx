@@ -26,7 +26,7 @@ import { PlacesPanel } from "./components/PlacesPanel";
 import { RequestEditor } from "./components/RequestEditor";
 import { SavedRoutesPanel } from "./components/SavedRoutesPanel";
 import { TracksPanel } from "./components/TracksPanel";
-import { along, bounds, pointAt } from "./geo";
+import { along, bounds, pointAt, walkLines } from "./geo";
 import { routeColour } from "./palette";
 import { type Pending, type Turn, answerWithOption, answerWithPoint, answerWithText, edited, utterance } from "./session";
 
@@ -312,6 +312,10 @@ export function App() {
   const chosenIndex = showingSaved ? 0 : selected;
 
   const lines = useMemo(() => shown.map((route) => route.body.geometry.coordinates), [shown]);
+  const walk = useMemo(
+    () => (chosen ? walkLines(chosen.body.geometry.coordinates, chosen.body.walk_spans ?? []) : []),
+    [chosen],
+  );
   const hover = useMemo(() => {
     const line = chosen?.body.geometry.coordinates;
     return line && hoverShare !== null ? pointAt(line, along(line), hoverShare) : null;
@@ -420,6 +424,7 @@ export function App() {
         start={start}
         finish={finish}
         routes={lines}
+        walk={walk}
         selected={chosenIndex}
         onSelect={setSelected}
         onClick={onMapClick}

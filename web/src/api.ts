@@ -75,6 +75,8 @@ export interface CandidateBody {
   note: string | null;
   via_label: string | null;
   features: Record<string, number>;
+  /** Inclusive (first, last) indexes into `geometry.coordinates`, one per walked stretch; absent in old saved routes. */
+  walk_spans: [number, number][];
   km_by_highway: Record<string, number>;
   km_by_surface: Record<string, number>;
   profile: Profile | null;

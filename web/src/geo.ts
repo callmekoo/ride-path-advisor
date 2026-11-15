@@ -49,3 +49,10 @@ export function bounds(lines: LonLat[][]): [LonLat, LonLat] | null {
   }
   return west <= east ? [[west, south], [east, north]] : null;
 }
+
+/** One polyline per walked stretch: `spans` are inclusive (first, last) indexes into `coordinates`. */
+export function walkLines(coordinates: LonLat[], spans: [number, number][]): LonLat[][] {
+  return spans.flatMap(([first, last]) =>
+    first >= 0 && last >= first && last < coordinates.length ? [coordinates.slice(first, last + 1)] : [],
+  );
+}

@@ -39,6 +39,8 @@ export function CandidateCard({ heading, route, colour, selected, gpxUrl, canSav
     return value === undefined ? [] : [[label, value] as const];
   });
 
+  const walkM = route.features["walk_m"] ?? 0;
+
   return (
     <div
       role="button"
@@ -57,6 +59,9 @@ export function CandidateCard({ heading, route, colour, selected, gpxUrl, canSav
         <span className="card-length">{formatKm(route.length_km)}</span>
         {route.ascent_m !== null && <span className="card-ascent">↑ {Math.round(route.ascent_m)} м</span>}
       </div>
+      {walkM >= 1 && (
+        <div className="card-walk">пешком {walkM >= 1000 ? formatKm(walkM / 1000) : `${Math.round(walkM)} м`}</div>
+      )}
       {shares.length > 0 && (
         <dl className="card-shares">
           {shares.map(([label, value]) => (

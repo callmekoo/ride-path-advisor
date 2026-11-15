@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { LonLat } from "./api";
-import { along, bounds, distanceM, pointAt } from "./geo";
+import { along, bounds, distanceM, pointAt, walkLines } from "./geo";
 
 // One degree of latitude, then about as far east along the 57th parallel.
 const line: LonLat[] = [
@@ -35,5 +35,13 @@ describe("geo", () => {
   it("frames lines", () => {
     expect(bounds([line, [[59, 58]]])).toEqual([[59, 56], [62, 58]]);
     expect(bounds([[]])).toBeNull();
+  });
+
+  it("cuts walked stretches out of a route", () => {
+    const route: LonLat[] = [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]];
+    expect(walkLines(route, [[1, 2]])).toEqual([[[1, 0], [2, 0]]]);
+    expect(walkLines(route, [[0, 1], [3, 4]])).toEqual([[[0, 0], [1, 0]], [[3, 0], [4, 0]]]);
+    expect(walkLines(route, [])).toEqual([]);
+    expect(walkLines(route, [[3, 7], [-1, 2], [1, 2]])).toEqual([[[1, 0], [2, 0]]]);
   });
 });
