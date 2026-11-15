@@ -401,6 +401,22 @@ def test_the_built_page_is_served_next_to_the_api(grid_engine, tmp_path):
     assert client.get("/api/nothing").status_code == 404
 
 
+def test_a_rebuilt_page_is_not_served_from_the_browser_cache(grid_engine, tmp_path):
+    site = tmp_path / "dist"
+    (site / "assets").mkdir(parents=True)
+    (site / "index.html").write_text("<!doctype html><title>Маршруты</title>", encoding="utf-8")
+    (site / "assets" / "index-abc123.js").write_text("console.log(1)")
+    client = TestClient(create_app(grid_engine, tmp_path / "rpa.sqlite", static_dir=site))
+
+    # The page names its scripts by content hash, so it alone must be re-checked on every visit.
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert client.get("/index.html").headers["cache-control"] == "no-cache"
+    assert client.get("/assets/index-abc123.js").headers["cache-control"] == "public, max-age=31536000, immutable"
+    unchanged = client.get("/", headers={"if-none-match": client.get("/").headers["etag"]})
+    assert unchanged.status_code == 304
+    assert unchanged.headers["cache-control"] == "no-cache"
+
+
 def test_without_a_built_page_there_is_only_the_api(grid_engine, tmp_path):
     for static_dir in (None, tmp_path / "missing"):
         client = TestClient(create_app(grid_engine, tmp_path / "rpa.sqlite", static_dir=static_dir))

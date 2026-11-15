@@ -268,8 +268,23 @@ def create_app(
         return importer().status()
 
     if static_dir is not None and (static_dir / "index.html").is_file():
-        app.mount("/", StaticFiles(directory=static_dir, html=True))
+        app.mount("/", _Page(directory=static_dir, html=True))
     return app
+
+
+class _Page(StaticFiles):
+    """The built web page, with caching that survives a rebuild.
+
+    The build names scripts and styles by content hash (`assets/index-<hash>.js`), so they never
+    change and may be cached for good. `index.html` names them, so the browser must re-check it on
+    every visit: without `Cache-Control` a browser keeps showing the page it has for hours.
+    """
+
+    def file_response(self, full_path, stat_result, scope, status_code=200) -> Response:
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        hashed = Path(full_path).parent.name == "assets"
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable" if hashed else "no-cache"
+        return response
 
 
 class _RidesFile:
