@@ -97,6 +97,48 @@
 не ломал остальные тесты, в этой же задаче добавить в `_ROAD_CLASS_PENALTY` запись
 `Highway.STEPS: 0.3` (как у `FOOTWAY`) — и тогда `uv run pytest -q` зелёный целиком.
 
+### Задача 1б. Железнодорожные платформы — *Sonnet*
+
+Добавлена по итогам проверки на реальных данных: лестницы моста у Перегона упираются в
+платформы, размеченные `railway=platform` + `public_transport=platform` без тега `highway`.
+Сборка читает только пути с `highway`, поэтому мост оставался островом. В регионе таких
+платформ 1694, из них 544 — замкнутые контуры.
+
+**Файлы:** `src/rpa/osm/tags.py`, `src/rpa/osm/build.py`, `tests/test_tags.py`,
+`tests/test_build.py`.
+
+**Правило `classify_way`:** путь без тега `highway`, у которого `railway=platform` или
+`public_transport=platform`, классифицируется так же, как `highway=platform`:
+`Highway.FOOTWAY`, `DISMOUNT`, оба направления; остальные правила (закрытый доступ, покрытие,
+мост, тоннель) действуют как для любого пути. Если `highway` есть, он главный: `railway` и
+`public_transport` не смотрятся. Прочие пути без `highway` (`railway=rail` и т. п.)
+по-прежнему дают `None`.
+
+**`read_ways` (`osm/build.py`):** фильтр ключей пропускает пути с `highway`, `railway` или
+`public_transport`; решение по-прежнему принимает `classify_way`. Замкнутый контур платформы
+обрабатывается как любой замкнутый путь — отдельной логики для площадей нет.
+
+**Тесты (`tests/test_tags.py`):**
+- `{"railway": "platform"}`, `{"public_transport": "platform"}`, оба тега вместе →
+  `Highway.FOOTWAY`, `DISMOUNT`, оба направления, без `SOFT_RESTRICTED` и `CYCLE_INFRA`;
+- `{"railway": "platform", "surface": "paved"}` → `Surface.PAVED`;
+- `{"railway": "platform", "access": "no"}` → `None`; с `foot=yes` → остаётся;
+- `{"railway": "rail"}`, `{"railway": "station"}`, `{"public_transport": "stop_position"}` →
+  `None`;
+- `{"highway": "residential", "public_transport": "platform"}` → `Highway.RESIDENTIAL` без
+  `DISMOUNT`.
+
+**Тест (`tests/test_build.py`)** на карте в `tmp_path`: улица A–B–B2, лестница B–C,
+платформа C–D (`railway=platform`, без `highway`), лестница D–E, улица E–F–F2; рядом рельсы
+`railway=rail` через собственные узлы. Ожидается: узлы платформы в графе, её ребро несёт
+`Highway.FOOTWAY` и `DISMOUNT`, рельсов в графе нет. Заодно сделать улицы в существующем
+тесте «мост без лестниц — остров» разной длины (на одной — лишний узел и ребро) и проверять,
+что узлы более длинной улицы остались: сейчас тест зависит от того, какую из равных компонент
+выберет сборка.
+
+**Проверка:** `uv run pytest -q tests/test_tags.py tests/test_build.py tests/test_cli.py tests/test_gazetteer.py tests/test_water.py`,
+затем `uv run pytest -q`.
+
 ### Задача 2. Штраф за пешие рёбра — *Sonnet*
 
 **Файлы:** `src/rpa/routing/cost.py`, `tests/test_cost.py`.
