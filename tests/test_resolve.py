@@ -4,7 +4,7 @@ import pytest
 
 from rpa.graph.snap import Snapper
 from rpa.nlu.prompt import ParsedRequest
-from rpa.nlu.resolve import Context, assign_points, resolve, without_clicked
+from rpa.nlu.resolve import Context, assign_points, resolve, ride_order, without_clicked
 from rpa.osm.gazetteer import Gazetteer, Place, build_gazetteer
 from rpa.routing.spec import LengthKm, Point, RouteSpec
 
@@ -247,13 +247,16 @@ def test_clicked_points_get_their_roles_from_what_the_text_names(points, start_n
     assert assign_points(points, start_named, end_named, loop) == expected
 
 
-def test_named_places_pass_in_the_order_said_and_before_the_clicked_ones(context, grid):
+def test_named_places_pass_where_they_shorten_the_ride_clicked_ones_keep_their_order(context, grid):
     parsed = ParsedRequest(start="работа", end="Ревда", via=["Сосновка", "Дегтярск"])
     context.points = [Point(lon=60.07, lat=56.86), Point(lon=60.08, lat=56.87)]
     context.saved_places.append({"name": "Дегтярск", "lon": 60.2, "lat": 56.9, "is_default": False})
     spec = resolve(parsed, context).spec
 
-    assert [point.label for point in spec.via] == ["Сосновка (деревня)", "Дегтярск", "точка 1", "точка 2"]
+    # Дегтярск lies just beyond the clicked points, towards Сосновка and Ревда.
+    labels = [point.label for point in spec.via]
+    assert sorted(labels) == ["Дегтярск", "Сосновка (деревня)", "точка 1", "точка 2"]
+    assert labels.index("точка 1") < labels.index("точка 2")
     assert spec.end.label == "Ревда (город)" and spec.shape == "p2p"
 
 
@@ -332,3 +335,92 @@ def test_the_previous_clicked_start_is_not_taken_for_a_clicked_finish(context):
     resolved = resolve(ParsedRequest(end="точка на карте"), context)
 
     assert resolved.spec is None and resolved.question.about == "end"
+
+
+def lonlat(lon: float, lat: float, label: str | None = None) -> Point:
+    return Point(lon=lon, lat=lat, label=label)
+
+
+def labels(points: list[Point]) -> list[str | None]:
+    return [point.label for point in points]
+
+
+START = lonlat(60.0, 56.8, "старт")
+FINISH = lonlat(61.0, 56.8, "финиш")
+
+
+def test_a_place_mentioned_later_but_nearer_the_start_goes_first():
+    far, near = lonlat(60.6, 56.8, "дальнее"), lonlat(60.2, 56.8, "ближнее")
+    assert labels(ride_order(START, [far, near], [], FINISH)) == ["ближнее", "дальнее"]
+
+
+def test_places_mentioned_in_a_zigzag_come_out_in_travel_order():
+    a, b, c = lonlat(60.2, 56.8, "A"), lonlat(60.5, 56.8, "B"), lonlat(60.8, 56.8, "C")
+    assert labels(ride_order(START, [b, c, a], [], FINISH)) == ["A", "B", "C"]
+    assert labels(ride_order(START, [c, a, b], [], FINISH)) == ["A", "B", "C"]
+
+
+def test_a_loop_comes_back_to_the_start_and_keeps_the_direction_of_the_first_mention():
+    east, north = lonlat(60.2, 56.8, "восток"), lonlat(60.0, 56.95, "север")
+    # Either way round is the same length: the first-mentioned place comes first.
+    assert labels(ride_order(START, [east, north], [], None)) == ["восток", "север"]
+    assert labels(ride_order(START, [north, east], [], None)) == ["север", "восток"]
+    # A third place on the way back closes the loop properly.
+    mid = lonlat(60.2, 56.95, "угол")
+    assert labels(ride_order(START, [north, east, mid], [], None)) == ["север", "угол", "восток"]
+
+
+def test_clicked_points_keep_their_order_and_a_named_place_may_land_between_them():
+    c1, c2 = lonlat(60.2, 56.8, "точка 1"), lonlat(60.8, 56.8, "точка 2")
+    middle = lonlat(60.5, 56.8, "между")
+    assert labels(ride_order(START, [middle], [c1, c2], FINISH)) == ["точка 1", "между", "точка 2"]
+    # The clicked points are in the wrong geographic order, and stay so.
+    assert labels(ride_order(START, [], [c2, c1], FINISH)) == ["точка 2", "точка 1"]
+
+
+def test_with_nothing_named_the_clicked_order_is_untouched():
+    c1, c2, c3 = lonlat(60.9, 56.9, "точка 1"), lonlat(60.1, 56.7, "точка 2"), lonlat(60.5, 56.8, "точка 3")
+    assert ride_order(START, [], [c1, c2, c3], FINISH) == [c1, c2, c3]
+    assert ride_order(START, [], [], FINISH) == []
+
+
+def test_a_single_point_is_returned_as_it_is():
+    only = lonlat(60.5, 57.5, "одно")
+    assert ride_order(START, [only], [], FINISH) == [only]
+    assert ride_order(START, [], [only], None) == [only]
+
+
+def test_a_difference_under_a_metre_keeps_the_earlier_candidate():
+    # Two places the same distance from the start and the finish: swapping them gains nothing.
+    a, b = lonlat(60.5, 56.8001, "A"), lonlat(60.5, 56.7999, "B")
+    assert labels(ride_order(START, [a, b], [], FINISH)) == ["A", "B"]
+    assert labels(ride_order(START, [b, a], [], FINISH)) == ["B", "A"]
+    # A gain of a few metres is a gain.
+    near_a = lonlat(60.5, 56.8001, "A")
+    far_b = lonlat(60.5 + 0.0003, 56.8001, "B")
+    assert labels(ride_order(START, [far_b, near_a], [], FINISH)) == ["A", "B"]
+
+
+def test_eight_points_are_ordered_in_well_under_a_second():
+    import random
+    import time
+
+    rng = random.Random(7)
+    named = [lonlat(60 + rng.random(), 56.5 + rng.random(), f"м{i}") for i in range(5)]
+    clicked = [lonlat(60 + rng.random(), 56.5 + rng.random(), f"точка {i}") for i in range(1, 4)]
+    began = time.perf_counter()
+    result = ride_order(START, named, clicked, None)
+    assert time.perf_counter() - began < 0.5
+    assert sorted(labels(result)) == sorted(labels([*named, *clicked]))
+    assert [p.label for p in result if p.label.startswith("точка")] == ["точка 1", "точка 2", "точка 3"]
+
+
+def test_a_refinement_adding_a_place_puts_it_where_it_belongs(context, grid):
+    context.saved_places.append({"name": "Арамиль", "lon": at(grid, 6, 10)[0], "lat": at(grid, 6, 10)[1], "is_default": False})
+    far = Point(lon=at(grid, 16, 10)[0], lat=at(grid, 16, 10)[1], label="Дальнее (село)")
+    finish = Point(lon=at(grid, 19, 10)[0], lat=at(grid, 19, 10)[1], label="Финиш (город)")
+    context.previous = RouteSpec(
+        start=Point(lon=at(grid, 2, 10)[0], lat=at(grid, 2, 10)[1]), end=finish, shape="p2p", via=[far]
+    )
+    spec = resolve(ParsedRequest(shape="p2p", end="Финиш (город)", via=["Дальнее (село)", "Арамиль"]), context).spec
+    assert [point.label for point in spec.via] == ["Арамиль", "Дальнее (село)"]

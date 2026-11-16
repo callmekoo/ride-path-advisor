@@ -15,7 +15,7 @@ from rpa.graph.snap import Snapper
 from rpa.nlu.prompt import CLICKED_POINT, DIRECTIONS, ParsedRequest
 from rpa.osm.gazetteer import Gazetteer, Hit, describe, rank
 from rpa.routing.cost import Prefs
-from rpa.routing.geo import bearing_deg
+from rpa.routing.geo import EARTH_RADIUS_M, bearing_deg
 from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
 
 MAX_OPTIONS = 5
@@ -94,6 +94,56 @@ def assign_points(
     return start, rest, finish
 
 
+def ride_order(start: Point, named: list[Point], clicked: list[Point], finish: Point | None) -> list[Point]:
+    """All intermediate points in riding order: the shortest straight-line way, the clicked ones in their order.
+
+    Named places may go anywhere, the clicked ones keep their relative order. `finish` is None for a loop,
+    which comes back to the start. Candidates are tried from the order of mention (named, then clicked) and
+    only a gain of over a metre replaces one, so nothing moves without a reason and the result is repeatable.
+    """
+    items = [*named, *clicked]
+    n, k = len(named), len(clicked)
+    if len(items) < 2 or k == len(items):
+        return list(items)
+    end = finish or start
+    nodes = [start, *items, end]
+    dist = [[_distance_m(a, b) for b in nodes] for a in nodes]
+    last = len(nodes) - 1  # the finish; items are nodes 1..len(items)
+    best_length, best_order = math.inf, list(range(1, len(items) + 1))
+    order: list[int] = []
+    used = [False] * (len(items) + 1)
+
+    def extend(at: int, length: float, next_clicked: int) -> None:
+        nonlocal best_length, best_order
+        if length >= best_length - 1.0:
+            return
+        if len(order) == len(items):
+            total = length + dist[at][last]
+            if total < best_length - 1.0:
+                best_length, best_order = total, list(order)
+            return
+        # Named places in the order of mention, then the next clicked point: the first leaf is today's order.
+        options = [i for i in range(1, n + 1) if not used[i]]
+        if next_clicked < k:
+            options.append(n + 1 + next_clicked)
+        for i in options:
+            used[i] = True
+            order.append(i)
+            extend(i, length + dist[at][i], next_clicked + (i > n))
+            order.pop()
+            used[i] = False
+
+    extend(0, 0.0, 0)
+    return [nodes[i] for i in best_order]
+
+
+def _distance_m(a: Point, b: Point) -> float:
+    """Great-circle distance; enough for comparing orders."""
+    phi1, phi2 = math.radians(a.lat), math.radians(b.lat)
+    h = math.sin((phi2 - phi1) / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(math.radians(b.lon - a.lon) / 2) ** 2
+    return 2 * EARTH_RADIUS_M * math.asin(math.sqrt(h))
+
+
 def _is_named(name: str | None) -> bool:
     return bool(name) and name.strip().casefold() != CLICKED_POINT
 
@@ -142,18 +192,23 @@ def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
         if not _is_named(parsed.end):
             raise _Ask(Question(text="Кликните по карте, куда едем.", about="end"))
         end = _find(parsed.end, context, near)
-    via = [_find(name, context, near) for name in parsed.via]
-    via += [_Found(_labelled(point, f"точка {number}")) for number, point in enumerate(clicked_via, start=1)]
+    named = [_find(name, context, near) for name in parsed.via]
+    clicked = [_Found(_labelled(point, f"точка {number}")) for number, point in enumerate(clicked_via, start=1)]
     shape = parsed.shape or ("p2p" if end else "loop")
     if shape == "loop" and end is not None:
         # "A loop to Revda": the named place is somewhere to pass, not somewhere to stop.
-        via, end = [*via, end], None
-    if len(via) > MAX_VIA:
+        named, end = [*named, end], None
+    if len(named) + len(clicked) > MAX_VIA:
         raise TooManyVia(f"Промежуточных точек может быть не больше {MAX_VIA}.")
     if shape == "p2p" and end is None and "end" in context.picks:
         end = _Found(context.picks["end"])
     if shape == "p2p" and end is None:
         raise _Ask(Question(text="Куда едем? Назовите место или кликните по карте.", about="end"))
+
+    # Where a named place goes is the service's decision, not the order the rider happened to mention it in.
+    by_point = {id(found.point): found for found in (*named, *clicked)}
+    ordered = ride_order(start.point, [f.point for f in named], [f.point for f in clicked], end.point if end else None)
+    via = [by_point[id(point)] for point in ordered]
 
     length = _length(parsed)
 
