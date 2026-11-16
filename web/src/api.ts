@@ -30,6 +30,8 @@ export interface RouteSpec {
   via_category: "water" | null;
   avoid: { point: Point; radius_m: number }[];
   bearing_deg: number | null;
+  /** A loop around an object: its outline as [lon, lat] vertices, empty for a circle of radius_m. */
+  around: { point: Point; radius_m: number; outline: [number, number][] } | null;
   n_candidates: number;
 }
 

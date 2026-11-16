@@ -1,7 +1,7 @@
 import pytest
 
 from rpa.routing.cost import Prefs
-from rpa.routing.spec import LengthKm, Point, RouteSpec
+from rpa.routing.spec import Around, LengthKm, Point, RouteSpec
 
 START = Point(lon=60.6, lat=56.84)
 END = Point(lon=59.93, lat=56.80, label="Ревда")
@@ -78,3 +78,39 @@ def test_spec_round_trips_through_json():
 def test_candidate_count_is_bounded():
     with pytest.raises(ValueError):
         RouteSpec(start=START, shape="loop", length_km=LengthKm.around(45), n_candidates=0)
+
+
+SQUARE = [(60.0, 56.0), (60.1, 56.0), (60.1, 56.1), (60.0, 56.1)]
+
+
+def test_around_loop_with_an_outline_or_a_circle():
+    centre = Point(lon=60.05, lat=56.05, label="пруд")
+    assert RouteSpec(start=START, shape="loop", around=Around(point=centre, radius_m=2000, outline=SQUARE)).around
+    circle = RouteSpec(start=START, shape="loop", around=Around(point=centre, radius_m=0)).around
+    assert circle is not None and circle.outline == []
+
+
+@pytest.mark.parametrize("outline", [[(60.0, 56.0)], [(60.0, 56.0), (60.1, 56.0)]])
+def test_an_outline_needs_three_vertices_or_none(outline):
+    with pytest.raises(ValueError):
+        Around(point=START, radius_m=500, outline=outline)
+
+
+@pytest.mark.parametrize("radius", [-1, 100_001])
+def test_around_radius_is_bounded(radius):
+    with pytest.raises(ValueError):
+        Around(point=START, radius_m=radius)
+
+
+def test_around_is_only_for_loops():
+    with pytest.raises(ValueError):
+        RouteSpec(start=START, end=END, shape="p2p", around=Around(point=START, radius_m=500))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"via": [END]}, {"via_category": "water"}, {"bearing_deg": 90.0}],
+)
+def test_around_excludes_via_category_and_bearing(extra):
+    with pytest.raises(ValueError):
+        RouteSpec(start=START, shape="loop", around=Around(point=START, radius_m=500), **extra)

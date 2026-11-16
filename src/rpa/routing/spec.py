@@ -48,6 +48,20 @@ class AvoidArea(BaseModel):
     radius_m: float = Field(ge=100, le=50_000)
 
 
+class Around(BaseModel):
+    """An object a loop should go around: its outline, or a circle where it has none."""
+
+    point: Point
+    radius_m: float = Field(ge=0, le=100_000)
+    outline: list[tuple[float, float]] = []  # (lon, lat) vertices of the object's border; empty for a circle
+
+    @model_validator(mode="after")
+    def _outline_is_a_polygon(self) -> Self:
+        if 0 < len(self.outline) < 3:
+            raise ValueError("an outline needs at least 3 vertices, or none at all")
+        return self
+
+
 class RouteSpec(BaseModel):
     start: Point
     end: Point | None = None
@@ -58,6 +72,7 @@ class RouteSpec(BaseModel):
     via_category: Literal["water"] | None = None  # the route must pass a place of this kind
     avoid: list[AvoidArea] = []
     bearing_deg: float | None = Field(default=None, ge=0, lt=360)  # where a loop should head; 0 = north
+    around: Around | None = None  # a loop that circles this object
     n_candidates: int = Field(default=3, ge=1, le=5)
 
     @model_validator(mode="after")
@@ -69,4 +84,9 @@ class RouteSpec(BaseModel):
                 raise ValueError("a loop returns to its start and takes no end point")
         elif self.end is None:
             raise ValueError("a point-to-point route needs an end point")
+        if self.around is not None:
+            if self.shape != "loop":
+                raise ValueError("only a loop can go around an object")
+            if self.via or self.via_category is not None or self.bearing_deg is not None:
+                raise ValueError("going around an object excludes via, via_category and bearing_deg")
         return self
