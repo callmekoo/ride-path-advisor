@@ -214,7 +214,7 @@ export function MapView(props: MapViewProps) {
       };
       const handle = (e: Event) => {
         if (e.type === "blur" || e.type === "touchcancel") return end(null);
-        if (e.type === "touchstart") return !marker && touch ? end(null) : undefined; // a second finger: a pinch, not a grab
+        if (e.type === "touchstart") return e === original || !touch ? undefined : end(null); // a second finger: a pinch, not a grab
         const point = e.type.startsWith("touch") ? (e as TouchEvent).changedTouches[0] : (e as MouseEvent);
         if (!point) return end(null);
         const moved = Math.hypot(point.clientX - from.x, point.clientY - from.y);
