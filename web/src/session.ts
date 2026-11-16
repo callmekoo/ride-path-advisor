@@ -38,14 +38,14 @@ export interface Pending extends Turn {
 
 /** New words from the rider; `click` only if the start marker was moved since the last result. */
 export function utterance(text: string, requestId: number | null, click: Point | null): ParseBody {
-  return { text: text.trim(), request_id: requestId, click, picks: {}, understood: null };
+  return { text: text.trim(), request_id: requestId, points: click ? [click] : [], picks: {}, understood: null };
 }
 
 function again(turn: Turn, change: Partial<ParseBody>): ParseBody {
   return {
     text: turn.text,
     request_id: turn.requestId,
-    click: turn.click,
+    points: turn.click ? [turn.click] : [],
     picks: turn.picks,
     understood: turn.understood,
     ...change,
@@ -64,7 +64,7 @@ export function answerWithPoint(pending: Pending, point: Point): ParseBody | nul
   const about = pending.question.about;
   if (about === "length") return null;
   const where = { lon: point.lon, lat: point.lat };
-  if (about === "start") return again(pending, { click: where });
+  if (about === "start") return again(pending, { points: [where] });
   const label = about === "end" ? null : about;
   return again(pending, { picks: { ...pending.picks, [about]: { ...where, label } } });
 }
@@ -92,5 +92,5 @@ export function lengthFromAnswer(text: string): number | null {
  * turn — same earlier result, same answers — so the start and "like option 2" keep their meaning.
  */
 export function edited(turn: Turn, understood: ParsedRequest, click: Point | null): ParseBody {
-  return { text: "", request_id: turn.requestId, click: click ?? turn.click, picks: turn.picks, understood };
+  return { text: "", request_id: turn.requestId, points: [click ?? turn.click].filter((point) => point !== null), picks: turn.picks, understood };
 }

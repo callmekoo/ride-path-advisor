@@ -148,7 +148,7 @@ export function App() {
         const asked: Turn = {
           text: body.text,
           requestId: body.request_id,
-          click: body.click,
+          click: body.points[0] ?? null,
           picks: body.picks,
           understood: parsed.understood,
         };

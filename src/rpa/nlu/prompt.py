@@ -102,13 +102,17 @@ def messages(text: str, previous: ParsedRequest | None, candidates: list[str], s
 def describe(spec: RouteSpec) -> ParsedRequest:
     """A RouteSpec in the model's vocabulary, so that it can carry a request over into its refinement.
 
-    The start is left out on purpose: it stays as it was unless the new words or a new click change it.
+    A start that has a name (a saved or gazetteer place, the default place) is described, so that the
+    model echoes it and the clicked points keep their roles. A clicked or unlabelled start is left out:
+    it stays as it was unless the new words or a new click change it.
     """
+    start = spec.start.label if spec.start.label and spec.start.label.strip().casefold() != CLICKED_POINT else None
     length = spec.length_km
     about = length is not None and abs(length.min - 0.9 * length.target) < 0.01 * length.target
     about = about and abs(length.max - 1.1 * length.target) < 0.01 * length.target
     return ParsedRequest(
         shape=spec.shape,
+        start=start,
         end=spec.end.label if spec.end else None,
         via=[point.label for point in spec.via if point.label],
         via_water=True if spec.via_category == "water" else None,

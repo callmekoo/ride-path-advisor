@@ -34,6 +34,7 @@ def test_a_request_is_described_in_the_models_vocabulary():
 
     assert describe(spec) == ParsedRequest(
         shape="loop",
+        start="дом",
         via_water=True,
         length_km=45.0,
         avoid_major=0.8,
@@ -58,7 +59,7 @@ def test_a_range_and_named_places_are_described_too():
 
     assert (described.shape, described.end, described.via) == ("p2p", "Ревда (город)", ["Волчиха (гора)"])
     assert (described.length_km, described.length_min_km, described.length_max_km) == (None, 100.0, 150.0)
-    assert described.start is None and described.direction is None and described.via_water is None
+    assert described.start == "дом" and described.direction is None and described.via_water is None
 
 
 def test_every_via_place_is_described_and_unlabelled_ones_are_left_out():
@@ -87,3 +88,12 @@ def test_a_refinement_shows_the_previous_request_and_candidates_but_no_coordinat
     assert "Предложенные варианты:\n1. Кольцо 44.7 км\n2. Кольцо 46.0 км" in user
     assert user.endswith("Новая реплика: короче")
     assert "60.6" not in user and "56.84" not in user
+
+
+def test_a_named_start_is_described_and_a_clicked_one_is_left_out():
+    named = RouteSpec(start=Point(lon=60.6, lat=56.84, label="Дом"), shape="loop")
+    clicked = RouteSpec(start=Point(lon=60.6, lat=56.84, label="точка на карте"), shape="loop")
+
+    assert describe(named).start == "Дом"
+    unlabelled = RouteSpec(start=Point(lon=60.6, lat=56.84), shape="loop")
+    assert describe(clicked).start is None and describe(unlabelled).start is None

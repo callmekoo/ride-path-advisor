@@ -32,7 +32,7 @@ describe("utterance", () => {
     expect(utterance(" короче ", 7, HERE)).toEqual({
       text: "короче",
       request_id: 7,
-      click: HERE,
+      points: [HERE],
       picks: {},
       understood: null,
     });
@@ -52,7 +52,7 @@ describe("answering a question", () => {
 
   it("takes a click on the map as the start when the start was asked for", () => {
     const body = answerWithPoint(pending("start"), HERE);
-    expect(body?.click).toEqual(HERE);
+    expect(body?.points).toEqual([HERE]);
     expect(body?.picks).toEqual({});
     expect(body?.understood).toEqual(loop);
   });
@@ -76,7 +76,7 @@ describe("answering a question", () => {
     expect(answerWithText(asked, " часа на три ")).toEqual({
       text: "кольцо через Ключи. часа на три",
       request_id: 7,
-      click: HERE,
+      points: [HERE],
       picks: { Ключи: HERE },
       understood: null,
     });
@@ -103,7 +103,7 @@ describe("edited", () => {
     expect(edited(turn, changed, null)).toEqual({
       text: "",
       request_id: 3,
-      click: HERE,
+      points: [HERE],
       picks: { Ключи: HERE },
       understood: changed,
     });
@@ -111,6 +111,6 @@ describe("edited", () => {
 
   it("starts from the marker if it was moved since", () => {
     const turn = { text: "кольцо", requestId: 3, click: HERE, picks: {}, understood: loop };
-    expect(edited(turn, loop, { lon: 60, lat: 57 }).click).toEqual({ lon: 60, lat: 57 });
+    expect(edited(turn, loop, { lon: 60, lat: 57 }).points).toEqual([{ lon: 60, lat: 57 }]);
   });
 });

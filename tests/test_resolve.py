@@ -4,7 +4,7 @@ import pytest
 
 from rpa.graph.snap import Snapper
 from rpa.nlu.prompt import ParsedRequest
-from rpa.nlu.resolve import Context, assign_points, resolve
+from rpa.nlu.resolve import Context, assign_points, resolve, without_clicked
 from rpa.osm.gazetteer import Gazetteer, Place, build_gazetteer
 from rpa.routing.spec import LengthKm, Point, RouteSpec
 
@@ -283,3 +283,21 @@ def test_a_refinement_keeps_all_the_via_places_and_a_loop_is_not_steered_by_them
 
     spec = resolve(ParsedRequest(shape="loop", via=[first.label, second.label], direction="E"), context).spec
     assert spec.via == [first, second] and spec.bearing_deg is None
+
+
+def test_a_clicked_via_label_is_resolved_from_the_previous_request(context):
+    clicked = Point(lon=60.05, lat=56.85, label="точка 1")
+    context.previous = RouteSpec(start=Point(lon=60.1, lat=56.82), shape="loop", via=[clicked])
+
+    spec = resolve(ParsedRequest(shape="loop", via=["точка 1"]), context).spec
+
+    assert spec.via == [clicked]
+
+
+def test_clicked_labels_are_dropped_when_points_are_sent():
+    parsed = ParsedRequest(start="точка на карте", end=" Точка на карте ", via=["точка 1", "Ревда", "Точка 12"])
+
+    cleaned = without_clicked(parsed)
+
+    assert (cleaned.start, cleaned.end, cleaned.via) == (None, None, ["Ревда"])
+    assert parsed.via == ["точка 1", "Ревда", "Точка 12"]  # the original is untouched

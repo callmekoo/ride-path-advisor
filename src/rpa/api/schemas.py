@@ -123,7 +123,7 @@ class TracksStatus(BaseModel):
 
 class ParseRequest(BaseModel):
     text: str = Field(default="", max_length=2000)
-    click: Point | None = None  # where the rider put the start marker for this request
+    points: list[Point] = Field(default=[], max_length=9)  # clicked on the map, in order; roles are assigned by the server
     request_id: int | None = None  # the earlier request that this text refines
     picks: dict[str, Point] = {}  # answers to questions, keyed by Question.about
     understood: ParsedRequest | None = None  # resolve this again instead of asking the model

@@ -6,6 +6,7 @@ be settled without the rider becomes one question at a time.
 """
 
 import math
+import re
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel
@@ -18,6 +19,8 @@ from rpa.routing.geo import bearing_deg
 from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
 
 MAX_OPTIONS = 5
+MAX_VIA = 8  # RouteSpec.via is limited to this many
+_CLICKED_VIA = re.compile(r"^точка \d+$")
 # A namesake is taken without asking when the next one is this much farther away.
 CLEARLY_NEARER_FACTOR = 2.0
 CLEARLY_NEARER_KM = 10.0
@@ -29,6 +32,10 @@ _DEFAULT_AVOID_RADIUS_M = 1500.0
 # "No more than N" and "at least N" still need a length to aim for.
 _OPEN_ENDED_LOW, _OPEN_ENDED_TARGET, _OPEN_ENDED_HIGH = 0.6, 0.85, 1.4
 _COMPASS = ("север", "северо-восток", "восток", "юго-восток", "юг", "юго-запад", "запад", "северо-запад")
+
+
+class TooManyVia(ValueError):
+    """More places to pass than a route can have."""
 
 
 class Question(BaseModel):
@@ -91,15 +98,39 @@ def _is_named(name: str | None) -> bool:
     return bool(name) and name.strip().casefold() != CLICKED_POINT
 
 
+def _is_clicked_via(name: str) -> bool:
+    return bool(_CLICKED_VIA.match(name.strip().casefold()))
+
+
+def without_clicked(parsed: ParsedRequest) -> ParsedRequest:
+    """The request with its labels of clicked points taken out.
+
+    When points are sent they are the whole truth about clicked places; labels the model echoed
+    from an earlier request would only name them a second time.
+    """
+    return parsed.model_copy(
+        update={
+            "start": parsed.start if _is_named(parsed.start) else None,
+            "end": parsed.end if _is_named(parsed.end) else None,
+            "via": [name for name in parsed.via if not _is_clicked_via(name)],
+        }
+    )
+
+
 def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
     warnings: list[str] = []
     clicked_start, clicked_via, clicked_end = assign_points(
         context.points, _is_named(parsed.start), _is_named(parsed.end), parsed.shape == "loop"
     )
+    if len(parsed.via) + len(clicked_via) > MAX_VIA:
+        raise TooManyVia(f"Промежуточных точек может быть не больше {MAX_VIA}.")
     start = _start(parsed, context, _labelled(clicked_start, CLICKED_POINT))
     near = (start.point.lon, start.point.lat)
 
     end = _find(parsed.end, context, near) if _is_named(parsed.end) else None
+    if end is None and clicked_end is None and parsed.end and not context.points:
+        # "The point on the map" again, with nothing new clicked: the finish as it was, not the start.
+        end = _previous_clicked_end(context.previous)
     if end is None and clicked_end is not None:
         end = _Found(_labelled(clicked_end, CLICKED_POINT))
     if end is None and parsed.end:
@@ -186,6 +217,11 @@ def _find(name: str, context: Context, near: tuple[float, float] | None) -> _Fou
         return _Found(context.picks[name])
     if wanted == CLICKED_POINT and context.points:
         return _Found(_labelled(context.points[0], CLICKED_POINT))
+    if _is_clicked_via(wanted) and context.previous is not None:
+        # Before saved places: "точка 1" is a label of this very request, whatever a place may be called.
+        for known in context.previous.via:
+            if known.label and known.label.casefold() == wanted:
+                return _Found(known)
     for place in context.saved_places:
         if place["name"].casefold() == wanted:
             return _Found(Point(lon=place["lon"], lat=place["lat"], label=place["name"]))
@@ -226,6 +262,12 @@ def _option(hit: Hit, near: tuple[float, float] | None) -> Point:
         side = _COMPASS[round(bearing_deg(*near, hit.place.lon, hit.place.lat) / 45) % 8]
         label += f", {hit.distance_km:.0f} км на {side}"
     return Point(lon=hit.place.lon, lat=hit.place.lat, label=label)
+
+
+def _previous_clicked_end(previous: RouteSpec | None) -> _Found | None:
+    if previous is not None and previous.end is not None and not _is_named(previous.end.label):
+        return _Found(previous.end)
+    return None
 
 
 def _previous_points(previous: RouteSpec | None) -> list[Point]:

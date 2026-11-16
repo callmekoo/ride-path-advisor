@@ -283,7 +283,7 @@ def test_without_a_start_the_service_asks_and_a_click_answers(grid_engine, grid,
     asked = client.post("/api/parse", json={"text": "кольцо 8 км"}).json()
     assert asked["spec"] is None and asked["question"]["about"] == "start"
 
-    answered = client.post("/api/parse", json={"understood": asked["understood"], "click": at(grid, 10, 10)}).json()
+    answered = client.post("/api/parse", json={"understood": asked["understood"], "points": [at(grid, 10, 10)]}).json()
     assert answered["spec"]["start"]["lon"] == at(grid, 10, 10)["lon"]
     assert len(llm.asked) == 1  # the second call resolved what was already understood
 
@@ -292,7 +292,7 @@ def test_a_follow_up_shows_the_model_the_previous_request_and_what_was_offered(g
     client, llm = text_client(
         grid_engine, tmp_path, {"length_km": 16, "via": ["озеро Круглое"]}, {"length_km": 20, "via": ["озеро Круглое"]}
     )
-    first = client.post("/api/parse", json={"text": "16 км до Круглого и обратно", "click": at(grid, 10, 10)}).json()
+    first = client.post("/api/parse", json={"text": "16 км до Круглого и обратно", "points": [at(grid, 10, 10)]}).json()
     routed = client.post("/api/route", json=first["spec"]).json()
     assert routed["candidates"][0]["via_label"] == "озеро Круглое"
 
@@ -303,7 +303,9 @@ def test_a_follow_up_shows_the_model_the_previous_request_and_what_was_offered(g
     assert "Предложенные варианты:\n1. Кольцо" in follow_up and "озеро Круглое; лес 0%" in follow_up
     assert follow_up.endswith("Новая реплика: подлиннее") and "60." not in follow_up
     assert second["spec"]["length_km"]["target"] == 20
-    assert second["spec"]["start"] == first["spec"]["start"] and second["spec"]["via"] == first["spec"]["via"] != []
+    assert second["spec"]["start"] == first["spec"]["start"]
+    assert second["spec"]["via"] == first["spec"]["via"]
+    assert first["spec"]["via"] != []
 
 
 def test_parse_failures_are_explained(grid_engine, grid, tmp_path):
@@ -318,6 +320,80 @@ def test_parse_failures_are_explained(grid_engine, grid, tmp_path):
     no_llm = TestClient(create_app(grid_engine, tmp_path / "other.sqlite"))
     response = no_llm.post("/api/parse", json={"text": "кольцо 8 км"})
     assert response.status_code == 503 and "LLM_API_KEY" in response.json()["detail"]
+
+
+def test_clicked_points_alone_make_a_route_without_the_model(client, grid):
+    assert client.get("/api/meta").json()["has_llm"] is False
+    points = [at(grid, 4, 4), at(grid, 10, 10), at(grid, 16, 16)]
+
+    two = client.post("/api/parse", json={"points": points[::2]})
+    assert two.status_code == 200
+    spec = two.json()["spec"]
+    assert (spec["start"]["lon"], spec["end"]["lon"]) == (points[0]["lon"], points[2]["lon"]) and spec["via"] == []
+
+    spec = client.post("/api/parse", json={"points": points}).json()["spec"]
+    assert [(p["lon"], p["lat"]) for p in spec["via"]] == [(points[1]["lon"], points[1]["lat"])]
+    assert spec["end"]["lon"] == points[2]["lon"]
+    assert client.post("/api/parse", json={"text": " "}).status_code == 422
+
+
+def test_in_a_loop_the_last_clicked_point_is_passed_not_the_finish(grid_engine, grid, tmp_path):
+    client, _ = text_client(grid_engine, tmp_path, {"shape": "loop", "length_km": 10})
+    points = [at(grid, 4, 4), at(grid, 10, 10), at(grid, 16, 16)]
+
+    spec = client.post("/api/parse", json={"text": "кольцо", "points": points}).json()["spec"]
+
+    assert spec["shape"] == "loop" and spec["end"] is None and spec["start"]["lon"] == points[0]["lon"]
+    assert [p["lon"] for p in spec["via"]] == [points[1]["lon"], points[2]["lon"]]
+
+
+def test_a_start_asked_about_is_answered_by_sending_the_point_first(grid_engine, grid, tmp_path):
+    client, llm = text_client(grid_engine, tmp_path, {"length_km": 8, "end": "озеро Круглое"})
+    asked = client.post("/api/parse", json={"text": "8 км до Круглого"}).json()
+    assert asked["question"]["about"] == "start"
+
+    answered = client.post("/api/parse", json={"understood": asked["understood"], "points": [at(grid, 4, 4)]}).json()
+
+    assert answered["spec"]["start"]["lon"] == at(grid, 4, 4)["lon"] and answered["spec"]["end"]["label"]
+    assert len(llm.asked) == 1
+
+
+def test_echoed_clicked_labels_do_not_duplicate_the_points_that_are_sent(grid_engine, grid, tmp_path):
+    echo = {"length_km": 20, "end": "точка на карте", "via": ["точка 1"]}
+    client, _ = text_client(grid_engine, tmp_path, echo)
+    first = client.post("/api/parse", json={"points": [at(grid, 4, 4), at(grid, 10, 10), at(grid, 16, 16)]}).json()
+    routed = client.post("/api/route", json=first["spec"]).json()
+
+    second = client.post(
+        "/api/parse",
+        json={"text": "подлиннее", "request_id": routed["request_id"], "points": [at(grid, 4, 4), at(grid, 10, 10), at(grid, 16, 16)]},
+    ).json()
+
+    assert second["understood"]["end"] is None and second["understood"]["via"] == []
+    assert len(second["spec"]["via"]) == 1 and second["spec"]["end"]["lon"] == at(grid, 16, 16)["lon"]
+    assert second["spec"]["length_km"]["target"] == 20
+
+
+def test_without_new_points_an_echoed_clicked_finish_is_the_previous_finish(grid_engine, grid, tmp_path):
+    client, _ = text_client(grid_engine, tmp_path, {"length_km": 20, "end": "точка на карте"})
+    first = client.post("/api/parse", json={"points": [at(grid, 4, 4), at(grid, 16, 16)]}).json()
+    routed = client.post("/api/route", json=first["spec"]).json()
+
+    second = client.post("/api/parse", json={"text": "подлиннее", "request_id": routed["request_id"]}).json()
+
+    assert second["spec"]["start"]["lon"] == at(grid, 4, 4)["lon"]
+    assert second["spec"]["end"]["lon"] == at(grid, 16, 16)["lon"]
+
+
+def test_too_many_intermediate_points_are_refused_in_words(client, grid):
+    client.post("/api/places", json={"name": "дом", **at(grid, 10, 10)})
+    nine = [at(grid, i, 4) for i in range(2, 11)]
+    named = {"shape": "loop", "start": "дом"}
+
+    refused = client.post("/api/parse", json={"understood": named, "points": nine})
+    assert refused.status_code == 422 and refused.json()["detail"] == "Промежуточных точек может быть не больше 8."
+    assert client.post("/api/parse", json={"understood": named, "points": nine[:8]}).status_code == 200
+    assert client.post("/api/parse", json={"points": [at(grid, i, 4) for i in range(2, 12)]}).status_code == 422
 
 
 # Saved routes

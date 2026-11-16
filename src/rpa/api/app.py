@@ -38,7 +38,7 @@ from rpa.api.schemas import (
 )
 from rpa.nlu.client import LlmClient, LlmError
 from rpa.nlu.prompt import ParsedRequest, describe, messages
-from rpa.nlu.resolve import Context, resolve
+from rpa.nlu.resolve import Context, TooManyVia, resolve, without_clicked
 from rpa.osm.gazetteer import Gazetteer
 from rpa.routing.engine import SIZES_FILE, Engine, read_loop_sizes
 from rpa.routing.generate import generate
@@ -136,9 +136,11 @@ def create_app(
         saved_places = db.places()
 
         parsed = body.understood
-        if parsed is None:
-            if not body.text.strip():
+        if parsed is None and not body.text.strip():
+            if not body.points:
                 raise HTTPException(422, "Пустой запрос.")
+            parsed = ParsedRequest()  # clicked points alone are a request
+        if parsed is None:
             if llm is None:
                 raise HTTPException(503, _NO_LLM)
             lines = [_candidate_line(number, candidate) for number, candidate in enumerate(offered, start=1)]
@@ -151,16 +153,21 @@ def create_app(
             except LlmError as error:
                 raise HTTPException(502, str(error)) from None
 
+        if body.points:
+            parsed = without_clicked(parsed)
         context = Context(
             snapper=engine.snapper,
             gazetteer=gazetteer,
             saved_places=saved_places,
-            points=[body.click] if body.click else [],
+            points=body.points,
             previous=previous,
             previous_candidates=[candidate.geometry.coordinates for candidate in offered],
             picks=body.picks,
         )
-        resolved = resolve(parsed, context)
+        try:
+            resolved = resolve(parsed, context)
+        except TooManyVia as error:
+            raise HTTPException(422, str(error)) from None
         return ParseResponse(
             spec=resolved.spec, question=resolved.question, understood=parsed, warnings=resolved.warnings
         )

@@ -96,7 +96,7 @@ export interface RouteResponse {
 
 export interface ParseBody {
   text: string;
-  click: Point | null;
+  points: Point[]; // clicked on the map, in order
   request_id: number | null;
   picks: Record<string, Point>;
   understood: ParsedRequest | null;
