@@ -54,6 +54,39 @@ def test_snapper_finds_the_nearest_node(micro):
     assert distance == pytest.approx(12.7, abs=1.0)
 
 
+def walk_only_node(g, i: int, j: int):
+    """A copy of the grid where every street at node (i, j) is walk-only, like a station platform."""
+    import dataclasses
+
+    at = j * 21 + i
+    flags = g.edge_flags.copy()
+    flags[(np.asarray(g.edge_u) == at) | (np.asarray(g.edge_v) == at)] |= DISMOUNT
+    return dataclasses.replace(g, edge_flags=flags)
+
+
+def test_snapper_with_rideable_mask_skips_walk_only_nodes(grid):
+    walled = walk_only_node(grid, 10, 10)
+    rideable = np.ones(walled.n_nodes, dtype=bool)
+    rideable[10 * 21 + 10] = False
+    point = tuple(grid.node_lonlat[10 * 21 + 10])
+
+    assert Snapper(walled).nearest_node(*point) == (10 * 21 + 10, pytest.approx(0, abs=0.5))
+    node, distance = Snapper(walled, rideable).nearest_node(*point)
+    assert node != 10 * 21 + 10 and distance == pytest.approx(500, abs=5)
+    near = Snapper(walled, rideable).nodes_within(*point, 600)
+    assert sorted(near.tolist()) == sorted([10 * 21 + 9, 10 * 21 + 11, 9 * 21 + 10, 11 * 21 + 10])
+
+
+def test_engine_snaps_only_to_rideable_nodes(grid):
+    from rpa.routing.engine import Engine
+
+    walled = walk_only_node(grid, 10, 10)
+    engine = Engine(walled)
+    node, _ = engine.snapper.nearest_node(*grid.node_lonlat[10 * 21 + 10])
+    assert node != 10 * 21 + 10
+    assert 10 * 21 + 10 not in engine.snapper.nodes_within(*grid.node_lonlat[10 * 21 + 10], 1000)
+
+
 def test_snapper_reports_large_distances(micro):
     node, distance = Snapper(micro).nearest_node(60.1, 56.8)
     assert micro.node_osm_id[node] == 7

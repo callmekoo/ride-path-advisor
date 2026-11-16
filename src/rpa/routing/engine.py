@@ -10,6 +10,7 @@ from rpa.arrays import ranges
 from rpa.enrich.water import load_water
 from rpa.graph.snap import Snapper
 from rpa.graph.store import GraphData, load_graph
+from rpa.osm.tags import DISMOUNT
 from rpa.routing.cost import Prefs, arc_weights
 
 
@@ -74,7 +75,12 @@ class Engine:
         self.kernel = rpa_kernel.Graph(
             np.ascontiguousarray(g.edge_u), np.ascontiguousarray(g.edge_v), np.ascontiguousarray(g.node_lonlat)
         )
-        self.snapper = Snapper(g)
+        # Points snap only to nodes with a rideable edge, so a route never starts on a platform or stairs.
+        rideable = np.zeros(g.n_nodes, dtype=bool)
+        ridden = (np.asarray(g.edge_flags) & DISMOUNT) == 0
+        rideable[np.asarray(g.edge_u)[ridden]] = True
+        rideable[np.asarray(g.edge_v)[ridden]] = True
+        self.snapper = Snapper(g, rideable)
         self.length = np.ascontiguousarray(g.edge_len_m)
         # Arc 2e runs u -> v, arc 2e + 1 runs v -> u.
         self.arc_tail = np.stack([g.edge_u, g.edge_v], axis=1).ravel()

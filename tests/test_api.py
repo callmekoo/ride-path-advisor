@@ -102,6 +102,19 @@ def test_walked_stretches_reach_the_response(grid, tmp_path):
     assert spans and all(first <= last < len(candidate["geometry"]["coordinates"]) for first, last in spans)
 
 
+def test_a_start_on_a_walk_only_node_does_not_begin_on_foot(grid, tmp_path):
+    at_start = 10 * 21 + 10
+    flags = grid.edge_flags.copy()
+    flags[(np.asarray(grid.edge_u) == at_start) | (np.asarray(grid.edge_v) == at_start)] |= DISMOUNT
+    engine = Engine(dataclasses.replace(grid, edge_flags=flags))
+    client = TestClient(create_app(engine, tmp_path / "platform.sqlite"))
+    spec = {"start": at(grid, 10, 10), "end": at(grid, 18, 10), "shape": "p2p", "n_candidates": 1}
+
+    (candidate,) = client.post("/api/route", json=spec).json()["candidates"]
+
+    assert candidate["walk_spans"] == [] and candidate["features"]["walk_m"] == 0
+
+
 def test_malformed_spec_is_rejected(client, grid):
     response = client.post("/api/route", json={"start": at(grid, 10, 10), "shape": "p2p"})
     assert response.status_code == 422
