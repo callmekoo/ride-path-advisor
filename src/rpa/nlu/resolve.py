@@ -122,8 +122,6 @@ def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
     clicked_start, clicked_via, clicked_end = assign_points(
         context.points, _is_named(parsed.start), _is_named(parsed.end), parsed.shape == "loop"
     )
-    if len(parsed.via) + len(clicked_via) > MAX_VIA:
-        raise TooManyVia(f"Промежуточных точек может быть не больше {MAX_VIA}.")
     start = _start(parsed, context, _labelled(clicked_start, CLICKED_POINT))
     near = (start.point.lon, start.point.lat)
 
@@ -141,6 +139,8 @@ def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
     if shape == "loop" and end is not None:
         # "A loop to Revda": the named place is somewhere to pass, not somewhere to stop.
         via, end = [*via, end], None
+    if len(via) > MAX_VIA:
+        raise TooManyVia(f"Промежуточных точек может быть не больше {MAX_VIA}.")
     if shape == "p2p" and end is None and "end" in context.picks:
         end = _Found(context.picks["end"])
     if shape == "p2p" and end is None:

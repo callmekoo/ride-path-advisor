@@ -618,3 +618,15 @@ def test_new_loop_sizes_are_picked_up_without_a_restart(grid, tmp_path):
     sizes_path.unlink()  # `rpa match` found too few rides and removed the file
     client.get("/api/meta")
     assert engine.loop_sizes_km == DEFAULT_LOOP_SIZES_KM
+
+
+def test_a_named_finish_of_a_loop_counts_as_a_place_to_pass(grid_engine, grid, tmp_path):
+    client, _ = text_client(grid_engine, tmp_path)
+    client.post("/api/places", json={"name": "дом", **at(grid, 10, 10)})
+    eight = [at(grid, i, 4) for i in range(2, 10)]
+    loop_to_town = {"shape": "loop", "start": "дом", "end": "Ревда"}
+
+    refused = client.post("/api/parse", json={"understood": loop_to_town, "points": eight})
+
+    assert refused.status_code == 422 and refused.json()["detail"] == "Промежуточных точек может быть не больше 8."
+    assert client.post("/api/parse", json={"understood": loop_to_town, "points": eight[:7]}).status_code == 200
