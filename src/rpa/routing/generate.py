@@ -7,7 +7,9 @@ resized until the walk has the wanted length. A loop without a wanted length
 is offered in three sizes, one route each. A point-to-point route with a
 target length goes through one via node chosen so that the way there plus the
 way on add up to the target. A route through named places follows them in
-the given order and is lengthened, when it has to be, on its last leg.
+the given order and is lengthened, when it has to be, on its last leg. A ride
+around an object goes through anchor points on a ring laid around it and is
+kept only if it really circles the object.
 
 All attempts run in a thread pool: the search kernel releases the GIL.
 """
@@ -15,16 +17,22 @@ All attempts run in a thread pool: the search kernel releases the GIL.
 import math
 import os
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 import numpy as np
+import shapely
+import shapely.affinity
+from shapely.geometry import Polygon
 
+from rpa.routing import ring as rings
 from rpa.routing.diversity import select_by_size, select_diverse
 from rpa.routing.engine import Engine
 from rpa.routing.geo import destination
-from rpa.routing.path import build_path
+from rpa.routing.path import RoutePath, build_path
 from rpa.routing.score import Candidate, features, rejection, score
-from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
+from rpa.routing.spec import Around, AvoidArea, LengthKm, Point, RouteSpec
 from rpa.routing.trim import tidy
 from rpa.routing.walk import route_legs, route_through
 
@@ -63,6 +71,20 @@ VIA_MAX_OVERLAP = 0.6
 N_SIZE_BEARINGS = 6
 SIZE_BEARING_SHIFT_DEG = 10.0
 LOOP_SIZE_TOLERANCE = 0.15
+# A ride around an object: anchor points about this far apart along a ring around it, within these counts.
+AROUND_SPACING_M = 4000.0
+MIN_ANCHORS, MAX_ANCHORS = 4, 8
+# The ring is tried at these shares of the object's equivalent radius from its border, at least
+# MIN_AROUND_OFFSET_M from it and from each other.
+AROUND_OFFSETS = (0.05, 0.25, 0.6)
+MIN_AROUND_OFFSET_M = 150.0
+# Fewer anchors with a road nearby, or a stretch of ring without one longer than this share, and the
+# ring cannot be ridden on that side.
+MIN_RING_ANCHORS = 3
+MAX_RING_GAP = 0.4
+# Without a wanted length, a ride around an object is scored as if asked for the shortest ride found,
+# accepting up to this much more.
+AROUND_SLACK = (0.9, 2.0)
 N_WORKERS = min(8, os.cpu_count() or 1)
 
 # The arcs of a walk and the nodes it was asked to pass, in order (empty if there was no such wish).
@@ -89,6 +111,8 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
     walks: list[Walk]
     if places:
         walks, note = _through_places(engine, w, start, places, end, spec)
+    elif spec.around is not None:
+        return _with_profiles(engine, _around_candidates(engine, w, start, spec))
     elif spec.shape == "loop":
         groups = _loops(engine, w, start, spec.length_km, must, spec.bearing_deg)
         if spec.length_km is None:
@@ -128,6 +152,12 @@ def chain_title(via: list[Point]) -> str | None:
     """The places a route passes, in riding order, as «через: A, B» — «A → B» would read as a route from A to B."""
     labels = [_TRAILING_KIND.sub("", p.label) or p.label for p in via if p.label]
     return "через: " + ", ".join(labels) if labels else None
+
+
+def around_title(around: Around) -> str:
+    """The object a ride goes around, as «вокруг: X»."""
+    label = around.point.label
+    return "вокруг: " + ((_TRAILING_KIND.sub("", label) or label) if label else "объект")
 
 
 def _candidates(engine: Engine, w: np.ndarray, walks: list[Walk], spec: RouteSpec, note: str | None) -> list[Candidate]:
@@ -189,10 +219,16 @@ def _metres(engine: Engine, arcs: np.ndarray) -> float:
     return float(engine.length[arcs >> 1].astype(np.float64).sum())
 
 
-def _two_way_reachable(engine: Engine, w: np.ndarray, node: int) -> np.ndarray:
-    """Nodes that can be reached from `node` and from which `node` can be reached back."""
+def _reach(engine: Engine, w: np.ndarray, node: int) -> tuple[np.ndarray, np.ndarray]:
+    """The cost of getting from `node` to every node, and from every node back to `node`."""
     there, _, _ = engine.kernel.sssp(node, w, engine.length)
     back, _, _ = engine.kernel.sssp(node, w, engine.length, reverse=True)
+    return there, back
+
+
+def _two_way_reachable(engine: Engine, w: np.ndarray, node: int) -> np.ndarray:
+    """Nodes that can be reached from `node` and from which `node` can be reached back."""
+    there, back = _reach(engine, w, node)
     return np.isfinite(there) & np.isfinite(back)
 
 
@@ -317,6 +353,28 @@ def _nicest(engine: Engine, nice: np.ndarray, nodes: np.ndarray, lon: float, lat
     return int(nodes[order[0]])
 
 
+def _snap(
+    engine: Engine,
+    nice: np.ndarray,
+    usable: np.ndarray,
+    lon: float,
+    lat: float,
+    radius_m: float,
+    keep: Callable[[np.ndarray], np.ndarray] | None = None,
+) -> int | None:
+    """The nicest usable node within `radius_m` of (lon, lat), or None.
+
+    `keep` narrows the nodes found further: it takes their indices and returns those to choose from.
+    """
+    near = engine.snapper.nodes_within(lon, lat, radius_m)
+    near = near[usable[near]]
+    if keep is not None and len(near):
+        near = keep(near)
+    if len(near) == 0:
+        return None
+    return _nicest(engine, nice, near, lon, lat)
+
+
 # --- loops -------------------------------------------------------------------
 
 
@@ -429,20 +487,195 @@ def _polygon_vias(
     side = perimeter_m / corners
     radius = side / (2 * math.sin(math.pi / corners))
     centre = destination(lon, lat, bearing, radius)
+
+    def best_ranked(near: np.ndarray) -> np.ndarray:
+        near = near[np.isfinite(must[near])]
+        return near[must[near] == must[near].min()] if len(near) else near
+
     vias = []
     for i in range(1, corners):
         corner = destination(*centre, bearing + 180 + i * 360 / corners, radius)
         if must is not None and i == corners // 2:
-            near = engine.snapper.nodes_within(*corner, max(MIN_MUST_RADIUS_M, MUST_RADIUS_SHARE * side))
-            near = near[usable[near] & np.isfinite(must[near])]
-            near = near[must[near] == must[near].min()] if len(near) else near
+            via = _snap(engine, nice, usable, *corner, max(MIN_MUST_RADIUS_M, MUST_RADIUS_SHARE * side), best_ranked)
         else:
-            near = engine.snapper.nodes_within(*corner, max(MIN_SNAP_RADIUS_M, SNAP_RADIUS_SHARE * side))
-            near = near[usable[near]]
-        if len(near) == 0:
+            via = _snap(engine, nice, usable, *corner, max(MIN_SNAP_RADIUS_M, SNAP_RADIUS_SHARE * side))
+        if via is None:
             return None
-        vias.append(_nicest(engine, nice, near, *corner))
+        vias.append(via)
     return vias
+
+
+# --- around an object --------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Ring:
+    """What every attempt at a ride around one object shares."""
+
+    around: Around
+    origin: tuple[float, float]
+    polygon: Polygon  # the object, in local metres around `origin`
+    radius_m: float  # of a circle with the object's area
+    start: int
+    start_xy: tuple[float, float]
+    nice: np.ndarray
+    usable: np.ndarray
+    there: np.ndarray  # cost from the start to each node
+    back: np.ndarray  # cost from each node back to the start
+
+    def offsets(self) -> list[float]:
+        """The distances from the object's border that the ring is tried at, closest first."""
+        offsets: list[float] = []
+        for share in AROUND_OFFSETS:
+            least = offsets[-1] + MIN_AROUND_OFFSET_M if offsets else MIN_AROUND_OFFSET_M
+            offsets.append(max(least, share * self.radius_m))
+        return offsets
+
+
+@dataclass(frozen=True)
+class _RingWalk:
+    arcs: np.ndarray
+    core: np.ndarray  # the arcs of the ring itself, without the way there and back
+    offset_m: float  # how far from the object the ring was laid
+    path: RoutePath
+
+
+def _ring(engine: Engine, w: np.ndarray, start: int, around: Around) -> _Ring:
+    origin = (around.point.lon, around.point.lat)
+    polygon = rings.object_polygon(around)
+    there, back = _reach(engine, w, start)
+    usable = np.isfinite(there) & np.isfinite(back) & (engine.degree >= MIN_VIA_DEGREE)
+    start_xy = rings.to_local(engine.g.node_lonlat[start], origin)
+    return _Ring(
+        around=around,
+        origin=origin,
+        polygon=polygon,
+        radius_m=math.sqrt(polygon.area / math.pi),
+        start=start,
+        start_xy=(float(start_xy[0]), float(start_xy[1])),
+        nice=engine.node_niceness(w),
+        usable=usable,
+        there=there,
+        back=back,
+    )
+
+
+def _around(engine: Engine, w: np.ndarray, start: int, spec: RouteSpec) -> tuple[list[_RingWalk], str | None]:
+    """Rides from `start` once around `spec.around`, as close to it as the roads allow."""
+    ring = _ring(engine, w, start, spec.around)
+    attempts = [(offset, phase, ccw) for offset in ring.offsets() for phase in (0.0, 0.5) for ccw in (True, False)]
+
+    def attempt(shape: tuple[float, float, bool]) -> _RingWalk | None:
+        return _ring_walk(engine, w, ring, *shape)
+
+    with ThreadPoolExecutor(N_WORKERS) as pool:
+        return [walk for walk in pool.map(attempt, attempts) if walk is not None], None
+
+
+def _ring_walk(
+    engine: Engine,
+    w: np.ndarray,
+    ring: _Ring,
+    offset_m: float,
+    phase: float,
+    ccw: bool,
+    shift: tuple[float, float] = (0.0, 0.0),
+) -> _RingWalk | None:
+    """One ride around the object through anchors on a ring `offset_m` from it, or None.
+
+    The anchors stand at equal steps along the ring, the first `phase` of a step from its
+    beginning; `ccw` rides them counter-clockwise. `shift` moves the ring off-centre, in metres east
+    and north. Every anchor takes the nicest junction near it that lies outside the object and
+    beside the anchor along the ring, so that a ring across a bay does not snap to its far shore.
+    The ride goes from the start to the anchor that is cheapest to reach and leave from, around,
+    and back; a start near the ring takes the place of the anchor nearest to it.
+    """
+    border = shapely.affinity.translate(rings.ring_border(ring.polygon, offset_m), *shift)
+    n = int(np.clip(round(border.length / AROUND_SPACING_M), MIN_ANCHORS, MAX_ANCHORS))
+    step = border.length / n
+    positions = (np.arange(n) + phase) * step
+    anchors = rings.from_local(shapely.get_coordinates(shapely.line_interpolate_point(border, positions)), ring.origin)
+
+    start_point = shapely.Point(ring.start_xy)
+    start_slot = None
+    if border.distance(start_point) < step / 2:
+        start_slot = int(np.argmin(_along(positions, border.project(start_point), border.length)))
+
+    def beside(slot: int):
+        def keep(near: np.ndarray) -> np.ndarray:
+            xy = rings.to_local(engine.g.node_lonlat[near], ring.origin)
+            outside = ~shapely.contains_xy(ring.polygon, xy[:, 0], xy[:, 1])
+            along = _along(shapely.line_locate_point(border, shapely.points(xy)), positions[slot], border.length)
+            return near[outside & (along <= step / 3)]
+
+        return keep
+
+    slots: list[tuple[int, int]] = []
+    for slot in range(n):
+        if slot == start_slot:
+            slots.append((slot, ring.start))
+            continue
+        lon, lat = (float(value) for value in anchors[slot])
+        node = _snap(engine, ring.nice, ring.usable, lon, lat, max(MIN_SNAP_RADIUS_M, step / 3), beside(slot))
+        if node is not None:
+            slots.append((slot, node))
+    taken = [slot for slot, _ in slots]
+    if len(taken) < MIN_RING_ANCHORS or max(np.diff([*taken, taken[0] + n])) > MAX_RING_GAP * n + 1e-9:
+        return None
+
+    nodes = [node for _, node in (slots if ccw else slots[::-1])]
+    if start_slot is not None:
+        at = nodes.index(ring.start)
+        order = nodes[at + 1 :] + nodes[:at]
+    else:
+        at = int(np.argmin([ring.there[nodes[e]] + ring.back[nodes[e - 1]] for e in range(len(nodes))]))
+        order = nodes[at:] + nodes[:at]
+    walk = [ring.start]
+    for node in [*order, ring.start]:
+        if node != walk[-1]:
+            walk.append(node)
+    arcs = route_through(engine, w, walk)
+    if arcs is None or len(arcs) == 0:
+        return None
+    arcs = tidy(arcs, engine.arc_tail, engine.arc_head, engine.length, _max_appendix_m(_metres(engine, arcs)))
+    if len(arcs) == 0:
+        return None
+    path = build_path(engine.g, arcs)
+    if not rings.encloses(path.coords, ring.around):
+        return None
+    core = arcs if start_slot is not None else _ring_core(engine, arcs, order[0], order[-1])
+    return _RingWalk(arcs, core, offset_m, path)
+
+
+def _along(positions: np.ndarray, position: float, length: float) -> np.ndarray:
+    """How far each of `positions` is from `position` along a closed line of `length`, either way."""
+    gap = np.abs(np.asarray(positions) - position) % length
+    return np.minimum(gap, length - gap)
+
+
+def _ring_core(engine: Engine, arcs: np.ndarray, first: int, last: int) -> np.ndarray:
+    """The arcs from leaving the first anchor to arriving at the last one; all of them if that is not found."""
+    leaving = np.flatnonzero(engine.arc_tail[arcs] == first)
+    arriving = np.flatnonzero(engine.arc_head[arcs] == last)
+    if len(leaving) == 0 or len(arriving) == 0 or leaving[0] > arriving[-1]:
+        return arcs
+    return arcs[leaving[0] : arriving[-1] + 1]
+
+
+def _around_candidates(engine: Engine, w: np.ndarray, start: int, spec: RouteSpec) -> list[Candidate]:
+    """The best distinct rides around `spec.around`; they are told apart by their rings alone."""
+    walks, note = _around(engine, w, start, spec)
+    judged = spec.model_copy(update={"length_km": None}) if note is not None else spec
+    measured = [(walk, features(engine, w, walk.arcs, judged.length_km)) for walk in walks]
+    passed = [(walk, m) for walk, m in measured if rejection(m, judged) is None]
+    length = judged.length_km
+    if length is None and passed:
+        # Without a wanted length the ride hugs the object: longer ones lose against the shortest.
+        km = min(m.length_m for _, m in passed) / 1000
+        length = LengthKm(target=km, min=AROUND_SLACK[0] * km, max=AROUND_SLACK[1] * km)
+    label = around_title(spec.around)
+    candidates = [Candidate(walk.path, m, score(m, length), note, label, core_arcs=walk.core) for walk, m in passed]
+    return select_diverse(candidates, spec.n_candidates, engine.length)
 
 
 # --- point to point ----------------------------------------------------------

@@ -9,7 +9,7 @@ import math
 
 import numpy as np
 import shapely
-from shapely.geometry import Polygon
+from shapely.geometry import LinearRing, Polygon
 from shapely.geometry.polygon import orient
 
 from rpa.routing.geo import EARTH_RADIUS_M
@@ -53,13 +53,20 @@ def object_polygon(around: Around) -> Polygon:
     return Polygon(np.column_stack([radius * np.cos(angles), radius * np.sin(angles)]))
 
 
-def ring_anchors(polygon: Polygon, offset_m: float, n: int, phase: float) -> np.ndarray:
-    """`n` points at equal steps of length along the outer border of the polygon grown by `offset_m`.
+def ring_border(polygon: Polygon, offset_m: float) -> LinearRing:
+    """The outer border of the polygon grown by `offset_m`, counter-clockwise.
 
-    Counter-clockwise; `phase` in 0..1 shifts the first point by that share of the whole length.
-    Growing closes bays narrower than twice the offset, so anchors do not lead a route into them.
+    Growing closes bays narrower than twice the offset, so a ring along it does not lead into them.
     """
-    border = orient(_largest(polygon.buffer(offset_m)), sign=1.0).exterior
+    return orient(_largest(polygon.buffer(offset_m)), sign=1.0).exterior
+
+
+def ring_anchors(polygon: Polygon, offset_m: float, n: int, phase: float) -> np.ndarray:
+    """`n` points at equal steps of length along `ring_border`, counter-clockwise.
+
+    `phase` in 0..1 shifts the first point by that share of the whole length.
+    """
+    border = ring_border(polygon, offset_m)
     return np.array(
         [border.interpolate(((phase + i / n) % 1.0) * border.length, normalized=False).coords[0] for i in range(n)]
     )

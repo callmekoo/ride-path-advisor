@@ -3,13 +3,14 @@
 import numpy as np
 import pytest
 
-from helpers import with_walked_cut
+from helpers import grid_with_hole, rect_outline, with_walked_cut
 
 from rpa.routing.cost import Prefs
 from rpa.routing.diversity import core_edges, overlap
 from rpa.routing.engine import Engine
 from rpa.routing.generate import APPENDIX_SHARE, MIN_APPENDIX_M, _passes_in_order, generate
-from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
+from rpa.routing.ring import encloses
+from rpa.routing.spec import Around, AvoidArea, LengthKm, Point, RouteSpec
 
 
 def node(i: int, j: int) -> int:
@@ -567,3 +568,92 @@ def test_the_chain_title_drops_a_trailing_kind_and_skips_unlabelled_points(grid)
     ]
     assert chain_title(via) == "через: Двуреченск, Маминское (село), (село) Старое, Ревда (город), 4 км на восток"
     assert chain_title([point(grid, 5, 5)]) is None and chain_title([]) is None
+
+
+# --- around an object --------------------------------------------------------
+
+# A lake filling the blocks between the streets i = 8..12, j = 8..12: the streets around it make an 8 km ring.
+HOLE = (8, 12, 8, 12)
+
+
+@pytest.fixture(scope="module")
+def hole_engine(grid):
+    return Engine(grid_with_hole(grid, *HOLE))
+
+
+def around_spec(
+    grid, i: int, j: int, box=HOLE, label: str | None = "Тестовое (озеро)", km: float | None = None, n: int = 3
+) -> RouteSpec:
+    outline = rect_outline(grid, *box)
+    lon, lat = np.mean(outline, axis=0).tolist()
+    around = Around(point=Point(lon=lon, lat=lat, label=label), radius_m=1000.0, outline=outline)
+    length = LengthKm.around(km) if km is not None else None
+    return RouteSpec(start=point(grid, i, j), shape="loop", length_km=length, around=around, n_candidates=n)
+
+
+def assert_around(engine: Engine, candidates, spec: RouteSpec, i: int, j: int) -> None:
+    """At least one route, each a sound loop from (i, j) that goes once around the object."""
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert_sound(engine, candidate.path.arcs, node(i, j), node(i, j))
+        assert encloses(candidate.path.coords, spec.around)
+        assert candidate.core_arcs is not None
+
+
+def test_a_loop_around_a_lake_from_its_shore_hugs_it(grid, hole_engine):
+    spec = around_spec(grid, 8, 10)
+    candidates = generate(hole_engine, spec)
+    assert_around(hole_engine, candidates, spec, 8, 10)
+    assert candidates[0].path.length_m == pytest.approx(8000, rel=0.01)
+    assert candidates[0].via_label == "вокруг: Тестовое"
+    assert candidates[0].note is None
+
+
+def test_a_loop_around_a_lake_from_below_it_rides_there_and_back(grid, hole_engine):
+    spec = around_spec(grid, 10, 5)
+    candidates = generate(hole_engine, spec)
+    assert_around(hole_engine, candidates, spec, 10, 5)
+    # 1.5 km there, 8 km around, 1.5 km back, give or take a block.
+    assert candidates[0].path.length_m / 1000 <= 12.0
+    core_m = float(hole_engine.length[candidates[0].core_arcs >> 1].sum())
+    assert core_m < candidates[0].path.length_m - 2000
+
+
+def test_a_loop_around_a_lake_from_the_far_corner_of_the_map(grid, hole_engine):
+    spec = around_spec(grid, 0, 0)
+    assert_around(hole_engine, generate(hole_engine, spec), spec, 0, 0)
+
+
+def test_a_loop_around_a_long_narrow_lake(grid):
+    box = (9, 11, 4, 16)  # 1 km by 6 km
+    engine = Engine(grid_with_hole(grid, *box))
+    spec = around_spec(grid, 9, 10, box=box)
+    candidates = generate(engine, spec)
+    assert_around(engine, candidates, spec, 9, 10)
+    assert candidates[0].path.length_m == pytest.approx(14000, rel=0.05)
+
+
+def test_a_loop_around_an_object_without_an_outline_circles_its_point(grid, hole_engine):
+    lon, lat = grid.node_lonlat[node(10, 10)].tolist()
+    around = Around(point=Point(lon=lon, lat=lat, label="Гора"), radius_m=750.0)
+    spec = RouteSpec(start=point(grid, 8, 10), shape="loop", around=around)
+    candidates = generate(hole_engine, spec)
+    assert_around(hole_engine, candidates, spec, 8, 10)
+    assert candidates[0].via_label == "вокруг: Гора"
+
+
+def test_an_unnamed_object_is_called_an_object(grid, hole_engine):
+    candidates = generate(hole_engine, around_spec(grid, 8, 10, label=None))
+    assert candidates and all(c.via_label == "вокруг: объект" for c in candidates)
+
+
+def test_an_object_with_no_road_on_one_side_cannot_be_ridden_around(grid):
+    box = (15, 22, 6, 14)  # reaches past the eastern edge of the map
+    engine = Engine(grid_with_hole(grid, *box))
+    assert generate(engine, around_spec(grid, 15, 10, box=box)) == []
+
+
+def test_a_loop_around_an_object_is_deterministic(grid, hole_engine):
+    first = generate(hole_engine, around_spec(grid, 10, 5))
+    second = generate(hole_engine, around_spec(grid, 10, 5))
+    assert [c.path.arcs.tolist() for c in first] == [c.path.arcs.tolist() for c in second]

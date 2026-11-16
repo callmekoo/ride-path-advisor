@@ -10,6 +10,7 @@ from rpa.routing.ring import (
     from_local,
     object_polygon,
     ring_anchors,
+    ring_border,
     to_local,
     winding_number,
 )
@@ -120,6 +121,14 @@ def test_anchor_phase_shifts_the_start_and_direction_is_counter_clockwise():
     b = ring_anchors(square, 50.0, 8, 0.5 / 8)
     assert not np.allclose(a[0], b[0])
     assert winding_number(a, (0.0, 0.0)) == 1
+
+
+def test_the_ring_border_is_the_counter_clockwise_outline_at_the_offset():
+    square = shapely.box(-100, -100, 100, 100)
+    border = ring_border(square, 50.0)
+    assert border.length == pytest.approx(800 + 2 * math.pi * 50, rel=1e-2)
+    assert winding_number(np.array(border.coords), (0.0, 0.0)) == 1
+    assert ring_anchors(square, 50.0, 8, 0.0)[0] == pytest.approx(border.coords[0])
 
 
 def test_the_buffer_closes_a_narrow_bay():

@@ -20,6 +20,17 @@ def core_edges(arcs: np.ndarray, edge_len: np.ndarray, skip_m: float) -> np.ndar
     return np.unique(edges[inside])
 
 
+def _compared_edges(candidate: Candidate, edge_len: np.ndarray, skip_m: float) -> np.ndarray:
+    """What two candidates are compared on: the ring when the candidate has one, else its core edges.
+
+    Rides around one object from a far start share the whole way there and back; only the
+    rings tell them apart.
+    """
+    if candidate.core_arcs is not None:
+        return np.unique(candidate.core_arcs >> 1)
+    return core_edges(candidate.path.arcs, edge_len, skip_m)
+
+
 def overlap(a: np.ndarray, b: np.ndarray, edge_len: np.ndarray) -> float:
     """Length-weighted Jaccard similarity of two edge sets: 0 = disjoint, 1 = identical."""
     union = float(edge_len[np.union1d(a, b)].sum())
@@ -39,13 +50,13 @@ def select_diverse(
     `chosen` are kept ahead of the rest, e.g. what a stricter selection already took.
     """
     chosen = list(chosen or [])
-    chosen_edges = [core_edges(c.path.arcs, edge_len, skip_m) for c in chosen]
+    chosen_edges = [_compared_edges(c, edge_len, skip_m) for c in chosen]
     for candidate in sorted(candidates, key=lambda c: c.score, reverse=True):
         if len(chosen) >= n:
             break
         if any(candidate is other for other in chosen):
             continue
-        edges = core_edges(candidate.path.arcs, edge_len, skip_m)
+        edges = _compared_edges(candidate, edge_len, skip_m)
         if all(overlap(edges, other, edge_len) <= max_overlap for other in chosen_edges):
             chosen.append(candidate)
             chosen_edges.append(edges)

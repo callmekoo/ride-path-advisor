@@ -117,3 +117,53 @@ def square(engine: Engine, i: int, j: int, size: int) -> np.ndarray:
     return arcs_via(
         engine, node(i, j), node(i + size, j), node(i + size, j + size), node(i, j + size), node(i, j)
     )
+
+
+def without_edges(g: GraphData, drop: np.ndarray) -> GraphData:
+    """A copy of the graph without the edges marked in the bool mask `drop`; the nodes stay."""
+    keep = np.flatnonzero(~drop)
+    pieces = [np.arange(g.geom_off[e], g.geom_off[e + 1]) for e in keep]
+    counts = np.array([len(piece) for piece in pieces], dtype=np.uint32)
+    graph = dataclasses.replace(
+        g,
+        edge_u=g.edge_u[keep],
+        edge_v=g.edge_v[keep],
+        edge_len_m=g.edge_len_m[keep],
+        edge_way_id=g.edge_way_id[keep],
+        edge_way_pos=g.edge_way_pos[keep],
+        edge_highway=g.edge_highway[keep],
+        edge_surface=g.edge_surface[keep],
+        edge_flags=g.edge_flags[keep],
+        geom_off=np.concatenate([[0], np.cumsum(counts)]).astype(np.uint32),
+        geom_xy=g.geom_xy[np.concatenate(pieces)],
+    )
+    graph.validate()
+    return graph
+
+
+def grid_with_hole(g: GraphData, i0: int, i1: int, j0: int, j1: int) -> GraphData:
+    """A copy of the 21 x 21 grid with no streets inside the rectangle of nodes i0..i1, j0..j1.
+
+    Every edge at a node strictly inside the rectangle is removed; the streets on its border stay,
+    except where the rectangle reaches past the edge of the grid.
+    """
+    i, j = np.asarray(g.edge_u) % 21, np.asarray(g.edge_u) // 21
+    k, m = np.asarray(g.edge_v) % 21, np.asarray(g.edge_v) // 21
+
+    def inside(x, y):
+        return (i0 < x) & (x < i1) & (j0 < y) & (y < j1)
+
+    return without_edges(g, inside(i, j) | inside(k, m))
+
+
+def rect_outline(g: GraphData, i0: int, i1: int, j0: int, j1: int, inset_m: float = 100.0) -> list[tuple[float, float]]:
+    """The outline of an object filling the rectangle of nodes i0..i1, j0..j1, `inset_m` inside its border.
+
+    Corners may lie past the edge of the grid; counter-clockwise, as (lon, lat).
+    """
+    lon0, lat0 = (float(value) for value in g.node_lonlat[0])
+    dlat = 500.0 / 111_195.0
+    dlon = 500.0 / (111_195.0 * np.cos(np.radians(lat0)))
+    west, east = lon0 + i0 * dlon + inset_m / 500 * dlon, lon0 + i1 * dlon - inset_m / 500 * dlon
+    south, north = lat0 + j0 * dlat + inset_m / 500 * dlat, lat0 + j1 * dlat - inset_m / 500 * dlat
+    return [(west, south), (east, south), (east, north), (west, north)]

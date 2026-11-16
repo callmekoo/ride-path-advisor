@@ -256,3 +256,15 @@ def test_crossings_lower_the_score_up_to_a_cap():
     assert score(dataclasses.replace(base, crossings=10), None) == pytest.approx(
         clean - CROSSING_PENALTY * MAX_COUNTED_CROSSINGS
     )
+
+
+def test_select_diverse_compares_rings_only_when_they_are_given(grid_engine):
+    # Two small rings north-east and north-west of (8, 8), both reached by the same 4 km street.
+    stem = arcs_via(grid_engine, node(8, 0), node(8, 8))
+    east = arcs_via(grid_engine, node(8, 8), node(9, 8), node(9, 9), node(8, 9), node(8, 8))
+    west = arcs_via(grid_engine, node(8, 8), node(8, 9), node(7, 9), node(7, 8), node(8, 8))
+    a = candidate(grid_engine, np.concatenate([stem, east, (stem ^ 1)[::-1]]), 90.0)
+    b = candidate(grid_engine, np.concatenate([stem, west, (stem ^ 1)[::-1]]), 80.0)
+    assert select_diverse([a, b], 2, grid_engine.length) == [a]
+    a.core_arcs, b.core_arcs = east, west
+    assert select_diverse([a, b], 2, grid_engine.length) == [a, b]
