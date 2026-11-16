@@ -7,7 +7,7 @@ from helpers import arcs_via, node, square, with_edge
 
 from rpa.osm.tags import DISMOUNT, Highway, Surface
 from rpa.routing.cost import Prefs
-from rpa.routing.diversity import overlap, select_diverse
+from rpa.routing.diversity import overlap, select_by_size, select_diverse
 from rpa.routing.engine import Engine
 from rpa.routing.path import build_path
 from rpa.routing.score import (
@@ -153,6 +153,23 @@ def test_select_diverse_keeps_an_earlier_choice_first_and_adds_to_it(grid_engine
     twin = candidate(grid_engine, ring(6), 80.0)
     chosen = select_diverse([twin, better, kept], 3, grid_engine.length, 0.6, skip_m=0.0, chosen=[kept])
     assert chosen == [kept, better]
+
+
+def test_select_by_size_takes_the_best_of_each_size_that_differs_from_the_ones_before(grid_engine):
+    small = candidate(grid_engine, square(grid_engine, 2, 2, 4), 60.0)
+    small_better = candidate(grid_engine, square(grid_engine, 12, 2, 4), 90.0)
+    middle_twin = candidate(grid_engine, square(grid_engine, 12, 2, 4), 95.0)  # same roads as small_better
+    middle = candidate(grid_engine, square(grid_engine, 2, 10, 6), 50.0)
+    large = candidate(grid_engine, square(grid_engine, 10, 10, 8), 40.0)
+    groups = [[small, small_better], [middle_twin, middle], [large]]
+    assert select_by_size(groups, grid_engine.length, 0.4) == [small_better, middle, large]
+
+
+def test_select_by_size_falls_back_to_the_best_of_a_size_and_skips_empty_sizes(grid_engine):
+    first = candidate(grid_engine, square(grid_engine, 2, 2, 8), 90.0)
+    twin = candidate(grid_engine, square(grid_engine, 2, 2, 8), 80.0)
+    twin_worse = candidate(grid_engine, square(grid_engine, 2, 2, 8), 70.0)
+    assert select_by_size([[first], [], [twin_worse, twin]], grid_engine.length, 0.4) == [first, twin]
 
 
 def test_shared_start_and_finish_do_not_count_as_overlap(grid_engine):

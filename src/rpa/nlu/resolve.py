@@ -33,7 +33,7 @@ _COMPASS = ("север", "северо-восток", "восток", "юго-�
 
 class Question(BaseModel):
     text: str
-    about: str  # the place name in doubt, or "start", "end", "length"
+    about: str  # the place name in doubt, or "start", "end"
     options: list[Point] = []  # what to choose from; empty when the rider has to name or click a place
 
 
@@ -90,8 +90,6 @@ def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
         raise _Ask(Question(text="Куда едем? Назовите место или кликните по карте.", about="end"))
 
     length = _length(parsed)
-    if shape == "loop" and length is None:
-        raise _Ask(Question(text="На сколько километров кольцо?", about="length"))
 
     for found in (start, end, via):
         if found is not None:

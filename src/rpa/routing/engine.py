@@ -15,6 +15,8 @@ from rpa.routing.cost import Prefs, arc_weights
 RIDES_FILE = "rides.npy"
 # Written by `rpa enrich`: forest share, elevation samples along the edges, ascent per direction.
 TERRAIN_FILES = ("forest.npy", "prof_off.npy", "prof_ele.npy", "ascent.npy")
+# A loop asked for without a length is offered in these three sizes, unless the ride history says otherwise.
+DEFAULT_LOOP_SIZES_KM = (30.0, 50.0, 80.0)
 
 
 def load_engine(directory: Path) -> "Engine":
@@ -69,6 +71,11 @@ class Engine:
         self.at_water: np.ndarray | None = None  # bool[N]; None until water is known
         self.water_rank: np.ndarray | None = None  # f32[N]: how good a water destination, lower is better; inf = none
         self._water_of_node: dict[int, str] = {}
+        self.loop_sizes_km: tuple[float, float, float] = DEFAULT_LOOP_SIZES_KM
+
+    def set_loop_sizes(self, sizes: tuple[float, float, float] | None) -> None:
+        """Replace the sizes of a loop without a wanted length, short to long; None restores the default."""
+        self.loop_sizes_km = DEFAULT_LOOP_SIZES_KM if sizes is None else tuple(float(size) for size in sizes)
 
     def set_rides(self, rides: np.ndarray | None) -> None:
         """Replace the ride counts, e.g. after new tracks were matched."""

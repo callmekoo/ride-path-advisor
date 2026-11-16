@@ -273,9 +273,52 @@ def test_a_route_passes_a_named_place_or_a_kind_of_place_but_not_both(grid):
         )
 
 
-def test_a_loop_without_a_length_or_a_place_offers_nothing_yet(grid, grid_engine):
-    spec = RouteSpec(start=point(grid, 10, 10), shape="loop")
-    assert generate(grid_engine, spec) == []
+SIZES_KM = (6.0, 10.0, 16.0)
+
+
+@pytest.fixture(scope="module")
+def sized_engine(grid):
+    engine = Engine(grid)
+    engine.set_loop_sizes(SIZES_KM)
+    return engine
+
+
+def assert_one_per_size(candidates, sizes) -> None:
+    """One candidate per size, short to long, each within 15 % of its size."""
+    assert len(candidates) == len(sizes)
+    for candidate, size in zip(candidates, sizes, strict=True):
+        assert size * 0.85 <= candidate.path.length_m / 1000 <= size * 1.15
+        assert candidate.note is None
+
+
+def test_a_loop_without_a_length_or_a_place_comes_in_three_sizes(grid, sized_engine):
+    candidates = generate(sized_engine, RouteSpec(start=point(grid, 10, 10), shape="loop"))
+    assert_one_per_size(candidates, SIZES_KM)
+    for candidate in candidates:
+        assert_sound(sized_engine, candidate.path.arcs, node(10, 10), node(10, 10))
+
+
+def test_fewer_wanted_loops_without_a_length_are_the_shortest_sizes(grid, sized_engine):
+    candidates = generate(sized_engine, RouteSpec(start=point(grid, 10, 10), shape="loop", n_candidates=2))
+    assert_one_per_size(candidates, SIZES_KM[:2])
+
+
+# Every size of these reaches the lake from (14, 14); smaller loops from there fall short of it.
+WATER_SIZES_KM = (8.0, 12.0, 16.0)
+WATER_START = (14, 14)
+
+
+def test_a_loop_to_water_without_a_length_comes_in_three_sizes(grid):
+    engine = Engine(grid)
+    shore = np.array([[node(i, j), 0] for i in range(18, 21) for j in range(18, 21)], dtype=np.uint32)
+    engine.set_water(shore, [{"name": "Дальнее", "kind": "lake", "area_m2": 50_000}])
+    engine.set_loop_sizes(WATER_SIZES_KM)
+    spec = RouteSpec(start=point(grid, WATER_START[0], WATER_START[1]), shape="loop", via_category="water")
+    candidates = generate(engine, spec)
+    assert_one_per_size(candidates, WATER_SIZES_KM)
+    for candidate in candidates:
+        assert engine.at_water[engine.arc_head[candidate.path.arcs]].any()
+        assert candidate.via_label == "озеро Дальнее"
 
 
 def with_peninsula(grid):

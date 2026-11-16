@@ -135,9 +135,10 @@ def test_lengths(context, said, expected):
     assert (length.target, length.min, length.max) == pytest.approx(expected)
 
 
-def test_a_loop_without_a_length_is_asked_about(context):
-    question = resolve(ParsedRequest(shape="loop"), context).question
-    assert question.about == "length" and "километров" in question.text
+def test_a_loop_without_a_length_is_left_to_the_generator(context):
+    resolved = resolve(ParsedRequest(shape="loop"), context)
+    assert resolved.question is None
+    assert resolved.spec.shape == "loop" and resolved.spec.length_km is None
 
 
 def test_namesakes_that_are_both_plausible_are_asked_about(context, grid):

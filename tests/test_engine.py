@@ -5,7 +5,7 @@ import pytest
 
 from rpa.osm.tags import Highway
 from rpa.routing.cost import Prefs
-from rpa.routing.engine import Engine
+from rpa.routing.engine import DEFAULT_LOOP_SIZES_KM, Engine
 from rpa.routing.geo import bearing_deg, destination
 
 
@@ -97,3 +97,12 @@ def test_profile_follows_the_route_in_both_directions(grid):
     np.testing.assert_allclose(back_height, height[::-1])
     np.testing.assert_allclose(back_distance, distance[-1] - distance[::-1], atol=1e-6)
     assert engine.forest[0] == 1.0
+
+
+def test_loop_sizes_default_and_can_be_replaced_and_reset(grid):
+    engine = Engine(grid)
+    assert engine.loop_sizes_km == DEFAULT_LOOP_SIZES_KM == (30.0, 50.0, 80.0)
+    engine.set_loop_sizes((20, 35, 60))
+    assert engine.loop_sizes_km == (20.0, 35.0, 60.0)
+    engine.set_loop_sizes(None)
+    assert engine.loop_sizes_km == DEFAULT_LOOP_SIZES_KM

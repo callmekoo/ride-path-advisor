@@ -3,7 +3,8 @@
 A loop is built as a walk start -> via nodes -> start, where the via nodes sit
 on the corners of a regular polygon that has the start as one corner. Many
 polygons are tried (different corner counts and orientations); each is
-resized until the walk has the wanted length. A point-to-point route with a
+resized until the walk has the wanted length. A loop without a wanted length
+is offered in three sizes, one route each. A point-to-point route with a
 target length goes through one via node chosen so that the way there plus the
 way on add up to the target. A route through named places follows them in
 the given order and is lengthened, when it has to be, on its last leg.
@@ -17,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from rpa.routing.diversity import select_diverse
+from rpa.routing.diversity import select_by_size, select_diverse
 from rpa.routing.engine import Engine
 from rpa.routing.geo import destination
 from rpa.routing.path import build_path
@@ -55,6 +56,12 @@ PLACE_DETOUR = 1.2
 # Routes through named places all share the roads near the places; when the usual limit leaves
 # fewer than the wanted number of routes, more are taken that overlap the chosen ones up to this much.
 VIA_MAX_OVERLAP = 0.6
+# A loop without a wanted length: each of the engine's three sizes is tried in this many directions,
+# turned a little from size to size so that the sizes do not all follow the same roads out,
+# and is accepted within this share of the size.
+N_SIZE_BEARINGS = 6
+SIZE_BEARING_SHIFT_DEG = 10.0
+LOOP_SIZE_TOLERANCE = 0.15
 N_WORKERS = min(8, os.cpu_count() or 1)
 
 # The arcs of a walk and the nodes it was asked to pass, in order (empty if there was no such wish).
@@ -62,13 +69,14 @@ Walk = tuple[np.ndarray, tuple[int, ...]]
 
 
 def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
-    """Up to `spec.n_candidates` distinct routes, best first; empty if nothing fits."""
+    """Up to `spec.n_candidates` distinct routes, best first; empty if nothing fits.
+
+    A loop with neither a length nor places gives one route per size instead, short to long.
+    """
     w = _with_avoided(engine, engine.weights(spec.prefs), spec.avoid)
     start, _ = engine.snapper.nearest_node(spec.start.lon, spec.start.lat)
     end = start if spec.shape == "loop" else engine.snapper.nearest_node(spec.end.lon, spec.end.lat)[0]
     places = _chain(start, [_place_node(engine, p) for p in spec.via], end)
-    if spec.shape == "loop" and spec.length_km is None and not places:
-        return []
     must = None
     if spec.via_category == "water":
         if engine.at_water is None:
@@ -79,32 +87,59 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
     if places:
         walks, note = _through_places(engine, w, start, places, end, spec)
     elif spec.shape == "loop":
-        walks = _loops(engine, w, start, spec.length_km, must, spec.bearing_deg)
+        groups = _loops(engine, w, start, spec.length_km, must, spec.bearing_deg)
+        if spec.length_km is None:
+            return _with_profiles(engine, _one_per_size(engine, w, groups, spec))
+        walks = groups[0][1]
     else:
         walks, note = _point_to_point(engine, w, start, end, spec, must)
     if note is not None:
         # The length could not be honoured; judge the routes on everything else.
         spec = spec.model_copy(update={"length_km": None})
 
-    chain_label = (" → ".join(p.label for p in spec.via if p.label) or None) if places else None
+    candidates = _candidates(engine, w, walks, spec, note)
+    chosen = select_diverse(candidates, spec.n_candidates, engine.length)
+    if places and len(chosen) < spec.n_candidates:
+        chosen = select_diverse(candidates, spec.n_candidates, engine.length, VIA_MAX_OVERLAP, chosen=chosen)
+    return _with_profiles(engine, chosen)
+
+
+def _candidates(engine: Engine, w: np.ndarray, walks: list[Walk], spec: RouteSpec, note: str | None) -> list[Candidate]:
+    """The walks that pass their places and are not rejected, measured and scored against `spec`."""
+    chain_label = " → ".join(p.label for p in spec.via if p.label) or None
     measured_walks = []
     for arcs, required in walks:
         # Trimming may have cut the route off from a place it was meant to reach.
         if not _passes_in_order(engine, arcs, required):
             continue
-        via_label = engine.water_label(required[0]) if must is not None else chain_label
+        if not required:
+            via_label = None
+        elif spec.via_category == "water":
+            via_label = engine.water_label(required[0])
+        else:
+            via_label = chain_label
         measured = features(engine, w, arcs, spec.length_km)
         if rejection(measured, spec) is None:
             measured_walks.append((arcs, measured, via_label))
     # Without a wanted length, routes are compared by total cost against the cheapest one.
     cheapest = min((m.cost_m for _, m, _ in measured_walks), default=None) if spec.length_km is None else None
-    candidates = [
+    return [
         Candidate(build_path(engine.g, arcs), m, score(m, spec.length_km, cheapest), note, via_label)
         for arcs, m, via_label in measured_walks
     ]
-    chosen = select_diverse(candidates, spec.n_candidates, engine.length)
-    if places and len(chosen) < spec.n_candidates:
-        chosen = select_diverse(candidates, spec.n_candidates, engine.length, VIA_MAX_OVERLAP, chosen=chosen)
+
+
+def _one_per_size(
+    engine: Engine, w: np.ndarray, groups: list[tuple[LengthKm, list[Walk]]], spec: RouteSpec
+) -> list[Candidate]:
+    """The best loop of each size, short to long; as many of the shortest sizes as routes are wanted."""
+    candidates = [
+        _candidates(engine, w, walks, spec.model_copy(update={"length_km": length}), None) for length, walks in groups
+    ]
+    return select_by_size(candidates, engine.length)[: spec.n_candidates]
+
+
+def _with_profiles(engine: Engine, chosen: list[Candidate]) -> list[Candidate]:
     for candidate in chosen:
         candidate.profile = engine.profile(candidate.path.arcs)
     return chosen
@@ -257,9 +292,12 @@ def _nicest(engine: Engine, nice: np.ndarray, nodes: np.ndarray, lon: float, lat
 
 
 def _loops(
-    engine: Engine, w: np.ndarray, start: int, length: LengthKm, must: np.ndarray | None, heading: float | None
-) -> list[Walk]:
-    """Loop walks from `start`.
+    engine: Engine, w: np.ndarray, start: int, length: LengthKm | None, must: np.ndarray | None, heading: float | None
+) -> list[tuple[LengthKm, list[Walk]]]:
+    """Loop walks from `start`, grouped by the length they were fitted to.
+
+    With `length` there is one group. Without it there is one group per size
+    of `engine.loop_sizes_km`, short to long, each fitted to about that size.
 
     `must` ranks nodes as places the route has to pass (lower is better, inf =
     not such a place); the far corner of each loop is then put on one of them.
@@ -267,16 +305,34 @@ def _loops(
     """
     nice = engine.node_niceness(w)
     usable = _two_way_reachable(engine, w, start) & (engine.degree >= MIN_VIA_DEGREE)
-    bearings = [360.0 * i / N_BEARINGS for i in range(N_BEARINGS)]
-    if heading is not None:
-        bearings = [b for b in bearings if abs((b - heading + 180) % 360 - 180) <= HEADING_TOLERANCE_DEG]
-    attempts = [(k, bearing) for k in VIA_COUNTS for bearing in bearings]
+    if length is not None:
+        sizes = [(length, [360.0 * i / N_BEARINGS for i in range(N_BEARINGS)])]
+    else:
+        sizes = [
+            (
+                LengthKm.around(km, LOOP_SIZE_TOLERANCE),
+                [360.0 * i / N_SIZE_BEARINGS + SIZE_BEARING_SHIFT_DEG * s for i in range(N_SIZE_BEARINGS)],
+            )
+            for s, km in enumerate(engine.loop_sizes_km)
+        ]
+    attempts = [
+        (group, size, k, bearing)
+        for group, (size, bearings) in enumerate(sizes)
+        for k in VIA_COUNTS
+        for bearing in bearings
+        if heading is None or abs((bearing - heading + 180) % 360 - 180) <= HEADING_TOLERANCE_DEG
+    ]
 
-    def attempt(shape: tuple[int, float]) -> Walk | None:
-        return _fit_loop(engine, w, nice, usable, must, start, length, *shape)
+    def attempt(shape: tuple[int, LengthKm, int, float]) -> Walk | None:
+        _, size, k, bearing = shape
+        return _fit_loop(engine, w, nice, usable, must, start, size, k, bearing)
 
+    groups: list[tuple[LengthKm, list[Walk]]] = [(size, []) for size, _ in sizes]
     with ThreadPoolExecutor(N_WORKERS) as pool:
-        return [walk for walk in pool.map(attempt, attempts) if walk is not None]
+        for shape, walk in zip(attempts, pool.map(attempt, attempts), strict=True):
+            if walk is not None:
+                groups[shape[0]][1].append(walk)
+    return groups
 
 
 def _max_appendix_m(target_m: float) -> float:

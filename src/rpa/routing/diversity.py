@@ -50,3 +50,30 @@ def select_diverse(
             chosen.append(candidate)
             chosen_edges.append(edges)
     return chosen
+
+
+def select_by_size(
+    groups: list[list[Candidate]], edge_len: np.ndarray, max_overlap: float = 0.4, skip_m: float = 2000.0
+) -> list[Candidate]:
+    """One candidate per group of a size, in the groups' order (short to long).
+
+    Each is the best of its group that overlaps the ones already taken by at
+    most `max_overlap`; when none does, the best of the group all the same,
+    since a different size is a different ride. An empty group gives nothing.
+    """
+    chosen: list[Candidate] = []
+    chosen_edges: list[np.ndarray] = []
+    for group in groups:
+        ranked = sorted(group, key=lambda c: c.score, reverse=True)
+        if not ranked:
+            continue
+        edges = [core_edges(c.path.arcs, edge_len, skip_m) for c in ranked]
+        distinct = (
+            i
+            for i, mine in enumerate(edges)
+            if all(overlap(mine, other, edge_len) <= max_overlap for other in chosen_edges)
+        )
+        best = next(distinct, 0)
+        chosen.append(ranked[best])
+        chosen_edges.append(edges[best])
+    return chosen
