@@ -354,6 +354,27 @@ def test_a_follow_up_shows_the_model_the_previous_request_and_what_was_offered(g
     assert first["spec"]["via"] != []
 
 
+def test_around_an_object_becomes_a_spec_with_its_outline_and_a_refinement_keeps_it(grid_engine, grid, tmp_path):
+    from rpa.osm.gazetteer import Gazetteer, Place, build_gazetteer
+
+    lon, lat = grid.node_lonlat[16 * 21 + 16].tolist()
+    outline = ((lon - 0.01, lat - 0.01), (lon + 0.01, lat - 0.01), (lon + 0.01, lat + 0.01), (lon - 0.01, lat + 0.01))
+    build_gazetteer([Place("озеро Круглое", "lake", lon, lat, radius_m=900.0, outline=outline)], tmp_path / "places.sqlite")
+    llm = FakeLlm({"around": "озеро Круглое", "length_km": 16}, {"around": "озеро Круглое", "length_km": 12})
+    client = TestClient(create_app(grid_engine, tmp_path / "rpa.sqlite", Gazetteer(tmp_path / "places.sqlite"), llm))
+
+    first = client.post("/api/parse", json={"text": "кольцо вокруг озера Круглое", "points": [at(grid, 10, 10)]}).json()
+
+    around = first["spec"]["around"]
+    assert first["spec"]["shape"] == "loop" and first["warnings"] == []
+    assert around["point"]["label"] == "озеро Круглое" and around["radius_m"] == 900.0 and len(around["outline"]) == 4
+    routed = client.post("/api/route", json=first["spec"]).json()
+    second = client.post("/api/parse", json={"text": "короче", "request_id": routed["request_id"]}).json()
+
+    assert '"around":"озеро Круглое"' in llm.asked[1] and "outline" not in llm.asked[1]
+    assert second["spec"]["around"] == around and second["spec"]["length_km"]["target"] == 12
+
+
 def test_parse_failures_are_explained(grid_engine, grid, tmp_path):
     from rpa.nlu.client import LlmError
 

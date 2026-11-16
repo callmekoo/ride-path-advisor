@@ -6,12 +6,16 @@ from rpa.graph.snap import Snapper
 from rpa.nlu.prompt import ParsedRequest
 from rpa.nlu.resolve import Context, assign_points, resolve, ride_order, without_clicked
 from rpa.osm.gazetteer import Gazetteer, Place, build_gazetteer
-from rpa.routing.spec import LengthKm, Point, RouteSpec
+from rpa.routing.spec import Around, LengthKm, Point, RouteSpec
 
 
 def at(grid, i: int, j: int) -> tuple[float, float]:
     lon, lat = grid.node_lonlat[j * 21 + i].tolist()
     return lon, lat
+
+
+def _square(lon: float, lat: float, half: float) -> tuple[tuple[float, float], ...]:
+    return ((lon - half, lat - half), (lon + half, lat - half), (lon + half, lat + half), (lon - half, lat + half))
 
 
 @pytest.fixture(scope="module")
@@ -27,6 +31,8 @@ def places(grid) -> list[Place]:
         Place("озеро Круглое", "lake", *at(grid, 16, 16), radius_m=600.0),
         Place("Острая", "peak", 60.08, 57.0),
         Place("Шарташский парк", "park", *at(grid, 2, 18)),
+        Place("озеро Большое", "lake", *at(grid, 6, 14), radius_m=900.0, outline=_square(*at(grid, 6, 14), 0.01)),
+        Place("река Исеть", "river", *at(grid, 14, 4)),
     ]
 
 
@@ -424,3 +430,128 @@ def test_a_refinement_adding_a_place_puts_it_where_it_belongs(context, grid):
     )
     spec = resolve(ParsedRequest(shape="p2p", end="Финиш (город)", via=["Дальнее (село)", "Арамиль"]), context).spec
     assert [point.label for point in spec.via] == ["Арамиль", "Дальнее (село)"]
+
+
+# --- going around an object ------------------------------------------------------
+
+
+def test_around_a_lake_takes_its_size_and_outline_and_is_a_loop(context, grid):
+    resolved = resolve(ParsedRequest(shape="loop", around="озеро Большое", length_km=30), context)
+
+    around = resolved.spec.around
+    assert resolved.question is None and resolved.warnings == []
+    assert around.point.label == "озеро Большое" and position(around.point) == at(grid, 6, 14)
+    assert around.radius_m == 900.0 and around.outline == list(_square(*at(grid, 6, 14), 0.01))
+    assert (resolved.spec.shape, resolved.spec.via, resolved.spec.via_category, resolved.spec.bearing_deg) == ("loop", [], None, None)
+
+
+def test_around_a_point_like_object_is_a_circle_without_an_outline(context):
+    around = resolve(ParsedRequest(around="Острая"), context).spec.around
+
+    assert around.point.label == "Острая (гора)" and around.outline == [] and around.radius_m == 0.0
+
+
+def test_around_makes_a_loop_whatever_the_shape_said(context):
+    spec = resolve(ParsedRequest(shape="p2p", around="озеро Большое"), context).spec
+    assert spec.shape == "loop" and spec.around is not None and spec.end is None
+    assert resolve(ParsedRequest(around="озеро Большое"), context).spec.shape == "loop"
+
+
+def test_a_finish_is_ignored_with_a_warning(context):
+    resolved = resolve(ParsedRequest(shape="p2p", end="Ревда", around="озеро Большое"), context)
+
+    assert resolved.spec.end is None and resolved.spec.around is not None
+    assert len(resolved.warnings) == 1 and "Ревда" in resolved.warnings[0]
+
+
+def test_a_second_click_is_not_a_finish_for_a_ride_around_an_object(context, grid):
+    first, second = (Point(lon=lon, lat=lat) for lon, lat in (at(grid, 10, 10), at(grid, 12, 12)))
+    context.points = [first, second]
+
+    resolved = resolve(ParsedRequest(around="озеро Большое"), context)
+
+    assert resolved.spec.end is None and resolved.spec.via == [] and position(resolved.spec.start) == position(first)
+    assert len(resolved.warnings) == 1 and "Промежуточные" in resolved.warnings[0]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"via": ["Ревда"]}, {"via_water": True}, {"via": ["Ревда"], "via_water": True}],
+)
+def test_places_to_pass_are_dropped_with_a_warning_and_around_wins(context, extra):
+    resolved = resolve(ParsedRequest(around="озеро Большое", **extra), context)
+
+    assert resolved.spec.around is not None
+    assert (resolved.spec.via, resolved.spec.via_category) == ([], None)
+    assert len(resolved.warnings) == 1 and "озеро Большое" in resolved.warnings[0]
+
+
+def test_a_named_place_to_pass_is_not_looked_up_for_a_ride_around_an_object(context):
+    resolved = resolve(ParsedRequest(around="озеро Большое", via=["Ключи"]), context)  # a namesake would be a question
+
+    assert resolved.question is None and len(resolved.warnings) == 1
+
+
+def test_a_direction_is_dropped_with_a_warning(context):
+    for extra in ({"direction": "N"}, {"toward": "Ревда"}):
+        resolved = resolve(ParsedRequest(around="озеро Большое", **extra), context)
+        assert resolved.spec.bearing_deg is None and len(resolved.warnings) == 1
+    quiet = resolve(ParsedRequest(around="озеро Большое", candidate=2), context)
+    assert quiet.spec.bearing_deg is None and quiet.warnings == []
+
+
+def test_a_named_start_still_works_for_a_ride_around_an_object(context, grid):
+    spec = resolve(ParsedRequest(around="озеро Большое", start="Ревда"), context).spec
+
+    assert position(spec.start) == at(grid, 4, 4) and spec.around is not None
+
+
+def test_around_a_river_is_refused_with_an_explanation(context):
+    resolved = resolve(ParsedRequest(around="река Исеть"), context)
+
+    assert resolved.spec is None
+    assert resolved.question.about == "река Исеть" and "реку" in resolved.question.text and resolved.question.options == []
+
+
+def test_around_a_namesake_asks_which_one(context):
+    resolved = resolve(ParsedRequest(around="Ключи"), context)
+
+    assert resolved.spec is None and resolved.question.about == "Ключи" and len(resolved.question.options) >= 2
+
+
+def test_an_answer_about_the_object_brings_its_outline_back(context, grid):
+    pick = Point(lon=at(grid, 6, 14)[0], lat=at(grid, 6, 14)[1], label="озеро Большое")
+    context.picks = {"Большое": pick}
+
+    around = resolve(ParsedRequest(around="Большое"), context).spec.around
+
+    assert around.outline == list(_square(*at(grid, 6, 14), 0.01)) and around.radius_m == 900.0
+
+
+@pytest.mark.parametrize("name", ["Дом", "дом", "работа"])
+def test_around_a_saved_place_is_an_ordinary_loop(context, name):
+    resolved = resolve(ParsedRequest(shape="loop", around=name, length_km=25), context)
+
+    assert resolved.question is None and resolved.warnings == []
+    assert resolved.spec.around is None and resolved.spec.shape == "loop"
+
+
+def test_a_refinement_keeps_the_object_and_its_outline_without_a_lookup(context, grid):
+    outline = list(_square(60.0, 56.0, 0.02))
+    previous_object = Around(point=Point(lon=60.0, lat=56.0, label="озеро Далёкое"), radius_m=1500.0, outline=outline)
+    context.previous = RouteSpec(start=Point(lon=60.1, lat=56.82), shape="loop", around=previous_object)
+    context.gazetteer = None  # the object is nowhere to be found: only the earlier request knows it
+
+    resolved = resolve(ParsedRequest(shape="loop", around="озеро Далёкое", length_km=40), context)
+
+    assert resolved.question is None and resolved.spec.around == previous_object
+    assert resolved.spec.length_km == LengthKm.around(40)
+
+
+def test_another_object_in_a_refinement_is_looked_up_afresh(context):
+    previous_object = Around(point=Point(lon=60.0, lat=56.0, label="озеро Далёкое"), radius_m=1500.0)
+    context.previous = RouteSpec(start=Point(lon=60.1, lat=56.82), shape="loop", around=previous_object)
+
+    around = resolve(ParsedRequest(around="озеро Большое"), context).spec.around
+
+    assert around.point.label == "озеро Большое" and around.outline != []

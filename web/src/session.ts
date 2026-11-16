@@ -10,6 +10,7 @@ export const NOTHING_SAID: ParsedRequest = {
   end: null,
   via: [],
   via_water: null,
+  around: null,
   length_km: null,
   length_min_km: null,
   length_max_km: null,

@@ -117,4 +117,13 @@ describe("without", () => {
     expect(without(request, "via")).toEqual(request);
     expect(without(request, "point:1")).toEqual(request);
   });
+
+  it("show a removable chip for the object to ride around, and taking it off leaves an ordinary loop", () => {
+    const request = { ...NOTHING_SAID, shape: "loop" as const, around: "Верх-Исетский пруд", length_km: 30 };
+    const found = chips(request, spec).find((chip) => chip.key === "around");
+
+    expect(found).toEqual({ key: "around", text: "вокруг: Верх-Исетский пруд", removable: true });
+    expect(without(request, "around")).toEqual({ ...request, around: null });
+    expect(texts(without(request, "around"), spec)).toEqual(["кольцо", "старт: дом", "около 30 км"]);
+  });
 });

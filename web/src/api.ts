@@ -42,6 +42,7 @@ export interface ParsedRequest {
   end: string | null;
   via: string[];
   via_water: boolean | null;
+  around: string | null;
   length_km: number | null;
   length_min_km: number | null;
   length_max_km: number | null;

@@ -3,7 +3,7 @@ import json
 from rpa.nlu.client import strict_schema
 from rpa.nlu.prompt import SYSTEM, ParsedRequest, describe, messages
 from rpa.routing.cost import Prefs
-from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
+from rpa.routing.spec import Around, AvoidArea, LengthKm, Point, RouteSpec
 
 HOME = Point(lon=60.6, lat=56.84, label="дом")
 
@@ -97,3 +97,16 @@ def test_a_named_start_is_described_and_a_clicked_one_is_left_out():
     assert describe(named).start == "Дом"
     unlabelled = RouteSpec(start=Point(lon=60.6, lat=56.84), shape="loop")
     assert describe(clicked).start is None and describe(unlabelled).start is None
+
+
+def test_a_ride_around_an_object_is_described_by_the_objects_label():
+    lake = Around(point=Point(lon=60.5, lat=56.8, label="Верх-Исетский пруд"), radius_m=1500, outline=[(60.4, 56.7), (60.6, 56.7), (60.5, 56.9)])
+    described = describe(RouteSpec(start=HOME, shape="loop", around=lake))
+
+    assert described.around == "Верх-Исетский пруд" and described.via == [] and described.direction is None
+    assert describe(RouteSpec(start=HOME, shape="loop")).around is None
+    assert "60.4" not in messages("короче", described, [], [])[1]  # the outline stays on the server
+
+
+def test_the_prompt_tells_ordinary_loops_around_home_from_rides_around_an_object():
+    assert "«Вокруг дома»" in SYSTEM and "around = null" in SYSTEM

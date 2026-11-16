@@ -26,6 +26,7 @@ class ParsedRequest(BaseModel):
     end: str | None = None
     via: list[str] = []
     via_water: bool | None = None
+    around: str | None = None
     length_km: float | None = Field(default=None, gt=0)
     length_min_km: float | None = Field(default=None, gt=0)
     length_max_km: float | None = Field(default=None, gt=0)
@@ -58,6 +59,9 @@ SYSTEM = f"""\
 «из A в B через C и D» → ["C", "D"].
 - via_water: true, если хочется к воде вообще («к воде», «к озеру», «искупаться»), а конкретный водоём не назван. \
 Если водоём назван, это via, а via_water — null.
+- around: объект с размером, который нужно объехать кругом («вокруг Верх-Исетского пруда», «объехать Ревду \
+кругом»): водоём, парк, город, гора. Название — как у via, но это не via; shape тогда "loop". «Вокруг дома», \
+«вокруг себя», «кружок вокруг» без объекта — обычное кольцо, around = null.
 - length_km: желаемая длина в километрах («около 45 км», «на 80»). Диапазон «100–150 км» — это length_min_km и \
 length_max_km, а length_km — null. «Не больше 60» — только length_max_km; «хотя бы 80» — только length_min_km. \
 Время переводи в километры из расчёта 20 км/ч (25 км/ч для шоссейного заезда).
@@ -116,6 +120,7 @@ def describe(spec: RouteSpec) -> ParsedRequest:
         end=spec.end.label if spec.end else None,
         via=[point.label for point in spec.via if point.label],
         via_water=True if spec.via_category == "water" else None,
+        around=spec.around.point.label if spec.around else None,
         length_km=round(length.target, 1) if length and about else None,
         length_min_km=round(length.min, 1) if length and not about else None,
         length_max_km=round(length.max, 1) if length and not about else None,

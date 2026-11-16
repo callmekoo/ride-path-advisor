@@ -60,6 +60,7 @@ export function chips(request: ParsedRequest, spec: RouteSpec | null, roles: Rol
   roles.forEach((role, index) => {
     if (typeof role === "number") add(`point:${index}`, `через: точка ${role}`);
   });
+  add("around", request.around && `вокруг: ${request.around}`);
   add("via_water", request.via_water && "к воде");
   add("length", lengthText(request), false);
   add("surface", request.surface === "paved" ? "по асфальту" : request.surface === "prefer_unpaved" && "по грунтам");

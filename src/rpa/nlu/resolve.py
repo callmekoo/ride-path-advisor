@@ -16,7 +16,7 @@ from rpa.nlu.prompt import CLICKED_POINT, DIRECTIONS, ParsedRequest
 from rpa.osm.gazetteer import Gazetteer, Hit, describe, rank
 from rpa.routing.cost import Prefs
 from rpa.routing.geo import EARTH_RADIUS_M, bearing_deg
-from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
+from rpa.routing.spec import Around, AvoidArea, LengthKm, Point, RouteSpec
 
 MAX_OPTIONS = 5
 MAX_VIA = 8  # RouteSpec.via is limited to this many
@@ -66,6 +66,7 @@ class _Found:
     point: Point
     kind: str = "point"
     radius_m: float = 0.0
+    outline: tuple[tuple[float, float], ...] = ()  # (lon, lat) border of an area; empty for a point
 
 
 class _Ask(Exception):
@@ -174,13 +175,38 @@ def without_clicked(parsed: ParsedRequest, points: list[Point]) -> ParsedRequest
     )
 
 
+def _around_name(parsed: ParsedRequest, context: Context) -> str | None:
+    """The object to ride around; a saved place has no size, so "around home" is an ordinary loop."""
+    if not _is_named(parsed.around):
+        return None
+    saved = {place["name"].casefold() for place in context.saved_places}
+    return None if parsed.around.strip().casefold() in saved else parsed.around
+
+
+def _around_object(name: str, context: Context, near: tuple[float, float]) -> _Found:
+    found = _find(name, context, near)
+    if found.kind == "river":
+        raise _Ask(Question(text="Объехать реку кругом не получится. Назовите озеро, парк или населённый пункт.", about=name))
+    if name in context.picks and context.gazetteer is not None:
+        # An answer to a question is only a point; its size and outline are in the gazetteer.
+        for hit in context.gazetteer.search(name, near=near, limit=3 * MAX_OPTIONS):
+            if (hit.place.lon, hit.place.lat) == (found.point.lon, found.point.lat):
+                return _Found(found.point, hit.place.kind, hit.place.radius_m, hit.place.outline)
+    return found
+
+
 def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
     warnings: list[str] = []
+    around_name = _around_name(parsed, context)
     clicked_start, clicked_via, clicked_end = assign_points(
-        context.points, _is_named(parsed.start), _is_named(parsed.end), parsed.shape == "loop"
+        context.points, _is_named(parsed.start), _is_named(parsed.end), parsed.shape == "loop" or around_name is not None
     )
     start = _start(parsed, context, _labelled(clicked_start, CLICKED_POINT))
     near = (start.point.lon, start.point.lat)
+
+    around = _around_object(around_name, context, near) if around_name else None
+    if around is not None:
+        return _around_spec(parsed, context, start, around, clicked_via, warnings)
 
     end = _find(parsed.end, context, near) if _is_named(parsed.end) else None
     if end is None and clicked_end is None and parsed.end and not context.points:
@@ -222,14 +248,7 @@ def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
         radius = _AVOID_RADIUS_M.get(found.kind, _DEFAULT_AVOID_RADIUS_M) + found.radius_m
         avoid.append(AvoidArea(point=found.point, radius_m=min(radius, 50_000.0)))
 
-    defaults = Prefs()
-    prefs = Prefs(
-        avoid_major=defaults.avoid_major if parsed.avoid_major is None else parsed.avoid_major,
-        surface=parsed.surface or defaults.surface,
-        familiarity=defaults.familiarity if parsed.familiarity is None else parsed.familiarity,
-        forest=defaults.forest if parsed.forest is None else parsed.forest,
-        hills=parsed.hills or defaults.hills,
-    )
+    prefs = _prefs(parsed)
     if via and parsed.via_water:
         names = ", ".join(found.point.label or "точка" for found in via)
         warnings.append(f"Маршрут пройдёт через {names}; отдельно к воде он не заезжает.")
@@ -245,6 +264,45 @@ def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
         bearing_deg=_bearing(parsed, context, start.point) if shape == "loop" and not via else None,
     )
     return Resolved(spec=spec, warnings=warnings)
+
+
+def _around_spec(
+    parsed: ParsedRequest, context: Context, start: _Found, around: _Found, clicked_via: list[Point], warnings: list[str]
+) -> Resolved:
+    """A loop around an object. It is exclusive with places to pass and a direction, so those are said to be ignored."""
+    label = around.point.label
+    if parsed.end:
+        warnings.append(f"Финиш «{parsed.end}» не учитывается: маршрут вокруг объекта — кольцо.")
+    if parsed.via or clicked_via or parsed.via_water:
+        warnings.append(f"Промежуточные места не учитываются: маршрут идёт вокруг объекта «{label}».")
+    if parsed.direction is not None or parsed.toward:
+        warnings.append(f"Направление не учитывается: маршрут идёт вокруг объекта «{label}».")
+    near = (start.point.lon, start.point.lat)
+    avoid = []
+    for name in parsed.avoid:
+        found = _find(name, context, near)
+        radius = _AVOID_RADIUS_M.get(found.kind, _DEFAULT_AVOID_RADIUS_M) + found.radius_m
+        avoid.append(AvoidArea(point=found.point, radius_m=min(radius, 50_000.0)))
+    spec = RouteSpec(
+        start=start.point,
+        shape="loop",
+        length_km=_length(parsed),
+        prefs=_prefs(parsed),
+        avoid=avoid,
+        around=Around(point=around.point, radius_m=min(around.radius_m, 100_000.0), outline=list(around.outline)),
+    )
+    return Resolved(spec=spec, warnings=[*_far_from_roads(start, context.snapper), *warnings])
+
+
+def _prefs(parsed: ParsedRequest) -> Prefs:
+    defaults = Prefs()
+    return Prefs(
+        avoid_major=defaults.avoid_major if parsed.avoid_major is None else parsed.avoid_major,
+        surface=parsed.surface or defaults.surface,
+        familiarity=defaults.familiarity if parsed.familiarity is None else parsed.familiarity,
+        forest=defaults.forest if parsed.forest is None else parsed.forest,
+        hills=parsed.hills or defaults.hills,
+    )
 
 
 def _labelled(point: Point | None, label: str) -> Point | None:
@@ -289,6 +347,10 @@ def _find(name: str, context: Context, near: tuple[float, float] | None) -> _Fou
     for place in context.saved_places:
         if place["name"].casefold() == wanted:
             return _Found(Point(lon=place["lon"], lat=place["lat"], label=place["name"]))
+    # The object of a ride around it keeps its outline too.
+    around = context.previous.around if context.previous else None
+    if around is not None and _same_name(name, around.point.label):
+        return _Found(around.point, radius_m=around.radius_m, outline=tuple((lon, lat) for lon, lat in around.outline))
     # A place carried over from the request being refined keeps its position: no second guessing.
     for known in _previous_points(context.previous):
         if known.label and known.label.casefold() == wanted:
@@ -308,7 +370,7 @@ def _find(name: str, context: Context, near: tuple[float, float] | None) -> _Fou
         options = [_option(hit, near) for hit in [best, *rivals][:MAX_OPTIONS]]
         raise _Ask(Question(text=f"Мест с названием «{name}» несколько. Какое имеется в виду?", about=name, options=options))
     place = best.place
-    return _Found(Point(lon=place.lon, lat=place.lat, label=describe(place)), place.kind, place.radius_m)
+    return _Found(Point(lon=place.lon, lat=place.lat, label=describe(place)), place.kind, place.radius_m, place.outline)
 
 
 def _clearly_nearer(best: Hit, runner_up: Hit, near: tuple[float, float] | None) -> bool:
@@ -338,6 +400,8 @@ def _previous_points(previous: RouteSpec | None) -> list[Point]:
     if previous is None:
         return []
     points = [previous.start, previous.end, *previous.via, *(area.point for area in previous.avoid)]
+    if previous.around is not None:
+        points.append(previous.around.point)
     return [point for point in points if point is not None]
 
 
