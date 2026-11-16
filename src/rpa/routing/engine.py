@@ -1,5 +1,6 @@
 """Engine: a loaded graph with everything route generation needs around it."""
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +14,8 @@ from rpa.routing.cost import Prefs, arc_weights
 
 
 RIDES_FILE = "rides.npy"
+# Written by `rpa match`: {"km": [short, medium, long]} loop sizes from the rider's own rides; may be absent.
+SIZES_FILE = "ride_sizes.json"
 # Written by `rpa enrich`: forest share, elevation samples along the edges, ascent per direction.
 TERRAIN_FILES = ("forest.npy", "prof_off.npy", "prof_ele.npy", "ascent.npy")
 # A loop asked for without a length is offered in these three sizes, unless the ride history says otherwise.
@@ -24,6 +27,9 @@ def load_engine(directory: Path) -> "Engine":
     graph, _ = load_graph(directory)
     rides_path = Path(directory) / RIDES_FILE
     engine = Engine(graph, np.load(rides_path) if rides_path.exists() else None)
+    sizes = read_loop_sizes(Path(directory) / SIZES_FILE)
+    if sizes is not None:
+        engine.set_loop_sizes(sizes)
     water = load_water(directory)
     if water is not None:
         engine.set_water(*water)
@@ -31,6 +37,16 @@ def load_engine(directory: Path) -> "Engine":
     if all((directory / name).exists() for name in TERRAIN_FILES):
         engine.set_terrain(*(np.load(directory / name) for name in TERRAIN_FILES))
     return engine
+
+
+def read_loop_sizes(path: Path) -> tuple[float, float, float] | None:
+    """Loop sizes stored by `rpa match`; None if there is no file or it is not what it should be."""
+    try:
+        km = json.loads(path.read_text())["km"]
+        a, b, c = (float(size) for size in km)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return a, b, c
 
 
 _WATER_WORD = {"lake": "озеро", "pond": "пруд", "reservoir": "водохранилище", "river": "река", "water": "водоём"}

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from rpa.api.app import create_app
 from rpa.api.jobs import TrackImport
 from rpa.osm.tags import DISMOUNT
-from rpa.routing.engine import Engine
+from rpa.routing.engine import DEFAULT_LOOP_SIZES_KM, Engine
 
 GPX_POINT = "{http://www.topografix.com/GPX/1/1}trk/{http://www.topografix.com/GPX/1/1}trkseg/{http://www.topografix.com/GPX/1/1}trkpt"
 DEGREES_PER_KM_EAST = 1 / (111.195 * np.cos(np.radians(56.8)))
@@ -508,3 +508,24 @@ def test_without_an_importer_there_is_no_upload(client):
     assert client.get("/api/tracks").status_code == 404
     assert client.put("/api/tracks/files/a.gpx", content=b"x").status_code == 404
     assert client.post("/api/tracks/import").status_code == 404
+
+
+def test_new_loop_sizes_are_picked_up_without_a_restart(grid, tmp_path):
+    rides_path, sizes_path = tmp_path / "rides.npy", tmp_path / "ride_sizes.json"
+    engine = Engine(grid)
+    client = TestClient(create_app(engine, tmp_path / "rpa.sqlite", rides_path=rides_path))
+    client.get("/api/meta")
+    assert engine.loop_sizes_km == DEFAULT_LOOP_SIZES_KM
+
+    sizes_path.write_text('{"km": [25, 40, 60]}')
+    client.get("/api/meta")
+    assert engine.loop_sizes_km == (25.0, 40.0, 60.0)
+
+    sizes_path.write_text('{"km": [20, 35, 55]}')
+    sizes_path.touch()
+    client.get("/api/meta")
+    assert engine.loop_sizes_km == (20.0, 35.0, 55.0)
+
+    sizes_path.unlink()  # `rpa match` found too few rides and removed the file
+    client.get("/api/meta")
+    assert engine.loop_sizes_km == DEFAULT_LOOP_SIZES_KM

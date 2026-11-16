@@ -1,8 +1,10 @@
 """Command line interface: `rpa fetch-region`, `rpa build-graph`, `rpa route`."""
 
 import hashlib
+import json
 from collections import Counter
 import os
+import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -73,6 +75,8 @@ def build_graph_command(
     out: Annotated[Path | None, typer.Option(help="Каталог графа; по умолчанию data/graph/<sha>-v<N>")] = None,
 ) -> None:
     """Собрать велопроезжий граф из файла OSM."""
+    from rpa.routing.engine import SIZES_FILE
+
     sha = _sha256(source)
     graph = build_graph(source)
     target = out or config.graph_root() / f"{sha[:12]}-v{FORMAT_VERSION}"
@@ -81,10 +85,14 @@ def build_graph_command(
         "source_sha256": sha,
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
+    previous = config.current_graph_dir().resolve()
     save_graph(graph, target, meta)
     if config.match_file().exists():
         # Rides are matched to OSM ways, not to graph edges, so they carry over to a rebuilt graph.
         _write_rides(target, graph)
+    if (previous / SIZES_FILE).exists() and previous != target.resolve():
+        # Loop sizes come from the tracks alone, so a rebuilt graph keeps them.
+        shutil.copy(previous / SIZES_FILE, target / SIZES_FILE)
     if out is None:
         link = config.current_graph_dir()
         temp_link = link.with_name("current.tmp")
@@ -243,6 +251,24 @@ def _write_rides(directory: Path, graph: GraphData) -> np.ndarray:
     return rides
 
 
+def _write_ride_sizes(directory: Path) -> None:
+    """Store the loop sizes the ride history suggests next to the graph; no suggestion, no (stale) file."""
+    from rpa.match.sizes import ride_sizes_km
+    from rpa.routing.engine import SIZES_FILE
+    from rpa.tracks.store import load_tracks
+
+    sizes = ride_sizes_km(load_tracks(config.tracks_dir()))
+    path = directory / SIZES_FILE
+    if sizes is None:
+        path.unlink(missing_ok=True)
+        typer.echo("Размеры колец: по умолчанию (заездов для своих размеров мало или они слишком похожи)")
+        return
+    temp = directory / "ride_sizes.tmp.json"
+    temp.write_text(json.dumps({"km": list(sizes)}))
+    temp.replace(path)
+    typer.echo("Размеры колец по истории заездов, км: " + ", ".join(f"{size:g}" for size in sizes))
+
+
 @app.command("match")
 def match_command(
     jobs: Annotated[int, typer.Option(min=1, help="Параллельных процессов")] = min(12, os.cpu_count() or 1),
@@ -278,6 +304,7 @@ def match_command(
     share = report.matched_km / report.track_km if report.track_km else 0.0
     typer.echo(f"Привязано {report.matched_km:.0f} из {report.track_km:.0f} км ({share:.0%}), не удалось: {report.failed} сегм.")
     _write_rides(directory.resolve(), graph)
+    _write_ride_sizes(directory.resolve())
 
 
 @app.command("sync-tracks")

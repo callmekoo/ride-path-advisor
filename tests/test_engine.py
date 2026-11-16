@@ -106,3 +106,17 @@ def test_loop_sizes_default_and_can_be_replaced_and_reset(grid):
     assert engine.loop_sizes_km == (20.0, 35.0, 60.0)
     engine.set_loop_sizes(None)
     assert engine.loop_sizes_km == DEFAULT_LOOP_SIZES_KM
+
+
+def test_loop_sizes_are_read_from_the_graph_directory(grid, tmp_path):
+    from rpa.graph.store import save_graph
+    from rpa.routing.engine import SIZES_FILE, load_engine
+
+    save_graph(grid, tmp_path, {})
+    assert load_engine(tmp_path).loop_sizes_km == DEFAULT_LOOP_SIZES_KM
+
+    (tmp_path / SIZES_FILE).write_text('{"km": [25, 40, 60]}')
+    assert load_engine(tmp_path).loop_sizes_km == (25.0, 40.0, 60.0)
+
+    (tmp_path / SIZES_FILE).write_text("not json")
+    assert load_engine(tmp_path).loop_sizes_km == DEFAULT_LOOP_SIZES_KM

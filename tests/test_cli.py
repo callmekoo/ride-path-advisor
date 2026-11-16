@@ -1,5 +1,6 @@
 import json
 
+import numpy as np
 import pytest
 from helpers import MICRO
 from typer.testing import CliRunner
@@ -195,3 +196,37 @@ def test_nlu_eval_without_a_model_explains_what_to_set(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     result = runner.invoke(app, ["nlu-eval"])
     assert result.exit_code == 1 and "LLM_API_KEY" in result.output
+
+
+def ride_history(*km: float):
+    from test_sizes import trackset
+
+    return trackset([(length, False) for length in km])
+
+
+def test_match_stores_loop_sizes_of_the_ride_history_and_drops_stale_ones(data_dir):
+    from rpa import cli
+    from rpa.tracks.store import save_tracks
+
+    current = data_dir / "graph" / "current"
+    save_tracks(ride_history(*np.linspace(20, 60, 21)), data_dir / "tracks")
+    cli._write_ride_sizes(current)
+    assert json.loads((current / "ride_sizes.json").read_text()) == {"km": [30.0, 40.0, 50.0]}
+
+    save_tracks(ride_history(30, 40), data_dir / "tracks")  # too few rides now
+    cli._write_ride_sizes(current)
+    assert not (current / "ride_sizes.json").exists()
+
+
+def test_build_graph_carries_loop_sizes_over_to_the_new_graph(data_dir, tmp_path):
+    old = (data_dir / "graph" / "current").resolve()
+    (old / "ride_sizes.json").write_text('{"km": [30.0, 40.0, 50.0]}')
+    changed = tmp_path / "micro2.opl"
+    changed.write_text(MICRO.read_text() + "\n# another map\n")
+
+    result = runner.invoke(app, ["build-graph", str(changed)])
+
+    assert result.exit_code == 0, result.output
+    new = (data_dir / "graph" / "current").resolve()
+    assert new != old
+    assert json.loads((new / "ride_sizes.json").read_text()) == {"km": [30.0, 40.0, 50.0]}

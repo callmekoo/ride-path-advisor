@@ -40,7 +40,7 @@ from rpa.nlu.client import LlmClient, LlmError
 from rpa.nlu.prompt import ParsedRequest, describe, messages
 from rpa.nlu.resolve import Context, resolve
 from rpa.osm.gazetteer import Gazetteer
-from rpa.routing.engine import Engine
+from rpa.routing.engine import SIZES_FILE, Engine, read_loop_sizes
 from rpa.routing.generate import generate
 from rpa.routing.gpx import to_gpx
 from rpa.routing.score import Candidate
@@ -292,9 +292,11 @@ class _RidesFile:
 
     def __init__(self, path: Path, engine: Engine) -> None:
         self.path = path
+        self.sizes_path = path.with_name(SIZES_FILE)
         self.engine = engine
         self._lock = threading.Lock()
         self._seen = self._stamp()
+        self._seen_sizes = self._sizes_stamp()
 
     def _stamp(self) -> tuple[int, int] | None:
         try:
@@ -303,8 +305,26 @@ class _RidesFile:
             return None
         return status.st_mtime_ns, status.st_ino
 
+    def _sizes_stamp(self) -> tuple[int, int] | None:
+        try:
+            status = self.sizes_path.stat()
+        except OSError:
+            return None
+        return status.st_mtime_ns, status.st_ino
+
+    def _refresh_sizes(self) -> None:
+        stamp = self._sizes_stamp()
+        if stamp == self._seen_sizes:
+            return
+        with self._lock:
+            self._seen_sizes = stamp
+            self.engine.set_loop_sizes(read_loop_sizes(self.sizes_path))
+
     def refresh(self) -> bool:
-        """True if the engine got new counts. A vanished or unusable file leaves the counts as they were."""
+        """True if the engine got new counts. A vanished or unusable file leaves the counts as they were.
+
+        The loop sizes written next to the counts are picked up the same way; a vanished file means defaults."""
+        self._refresh_sizes()
         stamp = self._stamp()
         if stamp is None or stamp == self._seen:
             return False
