@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RouteSpec } from "./api";
-import { chips, without } from "./chips";
+import { chips, pointOf, without } from "./chips";
 import { NOTHING_SAID } from "./session";
 
 const texts = (...args: Parameters<typeof chips>) => chips(...args).map((chip) => chip.text);
@@ -42,6 +42,18 @@ describe("chips", () => {
       ["via:Дегтярск", "через: Дегтярск", true],
       ["via:Ревда", "через: Ревда", true],
     ]);
+  });
+
+  it("show a removable chip for each clicked intermediate point, after the named places", () => {
+    const found = chips({ ...NOTHING_SAID, via: ["Ключи"] }, { ...spec, shape: "p2p" }, ["start", 1, 2, "finish"]);
+    expect(found.map((chip) => [chip.key, chip.text, chip.removable])).toEqual([
+      ["start", "старт: дом", false],
+      ["via:Ключи", "через: Ключи", true],
+      ["point:1", "через: точка 1", true],
+      ["point:2", "через: точка 2", true],
+    ]);
+    expect(pointOf("point:2")).toBe(2);
+    expect(pointOf("via:Ключи")).toBeNull();
   });
 
   it("keep quiet about defaults that the model spelled out", () => {
@@ -103,5 +115,6 @@ describe("without", () => {
     expect(without(request, "nonsense")).toEqual(request);
     expect(without(request, "avoid")).toEqual(request);
     expect(without(request, "via")).toEqual(request);
+    expect(without(request, "point:1")).toEqual(request);
   });
 });

@@ -31,6 +31,44 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 
+/* Clicked points: the start and the finish in the colours of the dots above, intermediate ones dark. */
+.map-point {
+  width: 24px;
+  height: 24px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  color: #fff;
+  font: 600 12px/20px system-ui, sans-serif;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: grab;
+}
+
+.map-point-start {
+  background: #14532d;
+}
+
+.map-point-finish {
+  background: #fff;
+  color: #14532d;
+  border-color: #14532d;
+}
+
+.map-point-via {
+  background: #1f2937;
+}
+
+.map-place {
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border-radius: 3px;
+  background: #b45309;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
 .map-option {
   width: 26px;
   height: 26px;

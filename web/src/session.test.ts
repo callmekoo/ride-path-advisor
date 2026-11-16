@@ -7,19 +7,27 @@ import {
   answerWithOption,
   answerWithPoint,
   answerWithText,
+  closedLoop,
   edited,
-  lengthFromAnswer,
+  freshTurn,
+  movedPoint,
+  pointRoles,
+  startingAt,
   utterance,
+  withPoint,
+  withoutPoint,
 } from "./session";
 
 const HERE: Point = { lon: 60.6, lat: 56.84 };
+const THERE: Point = { lon: 60.9, lat: 56.9 };
+const FAR: Point = { lon: 61.2, lat: 57.1 };
 const loop: ParsedRequest = { ...NOTHING_SAID, shape: "loop", via: ["Ключи"] };
 
 function pending(about: string, options: Point[] = [], extra: Partial<Pending> = {}): Pending {
   return {
     text: "кольцо через Ключи",
     requestId: 7,
-    click: null,
+    points: [],
     picks: {},
     understood: loop,
     question: { text: "?", about, options },
@@ -28,8 +36,8 @@ function pending(about: string, options: Point[] = [], extra: Partial<Pending> =
 }
 
 describe("utterance", () => {
-  it("sends the words, the request being refined and a fresh click", () => {
-    expect(utterance(" короче ", 7, HERE)).toEqual({
+  it("sends the words, the request being refined and the whole list of clicked points", () => {
+    expect(utterance(" короче ", 7, [HERE])).toEqual({
       text: "короче",
       request_id: 7,
       points: [HERE],
@@ -50,29 +58,20 @@ describe("answering a question", () => {
     expect(body.picks).toEqual({ Ревда: HERE, Ключи: { lon: 60.3, lat: 56.7, label: "Ключи (село)" } });
   });
 
-  it("takes a click on the map as the start when the start was asked for", () => {
-    const body = answerWithPoint(pending("start"), HERE);
-    expect(body?.points).toEqual([HERE]);
-    expect(body?.picks).toEqual({});
-    expect(body?.understood).toEqual(loop);
+  it("puts a click that answers the question about the start at the beginning of the points", () => {
+    const body = answerWithPoint(pending("start", [], { points: [THERE, FAR] }), HERE);
+    expect(body.points).toEqual([HERE, THERE, FAR]);
+    expect(body.picks).toEqual({});
+    expect(body.understood).toEqual(loop);
   });
 
   it("takes a click on the map as the place in doubt, under its name", () => {
-    expect(answerWithPoint(pending("Ключи"), HERE)?.picks).toEqual({ Ключи: { ...HERE, label: "Ключи" } });
-    expect(answerWithPoint(pending("end"), HERE)?.picks).toEqual({ end: { ...HERE, label: null } });
-  });
-
-  it("cannot answer a question about length with a click", () => {
-    expect(answerWithPoint(pending("length"), HERE)).toBeNull();
-  });
-
-  it("puts a number into the request when the length was asked for", () => {
-    const body = answerWithText(pending("length", [], { understood: { ...loop, length_max_km: 90 } }), "около 40 км");
-    expect(body.understood).toEqual({ ...loop, length_km: 40, length_min_km: null, length_max_km: null });
+    expect(answerWithPoint(pending("Ключи"), HERE).picks).toEqual({ Ключи: { ...HERE, label: "Ключи" } });
+    expect(answerWithPoint(pending("end"), HERE).picks).toEqual({ end: { ...HERE, label: null } });
   });
 
   it("sends any other answer to the model together with the original words", () => {
-    const asked = pending("length", [], { click: HERE, picks: { Ключи: HERE }, text: "кольцо через Ключи." });
+    const asked = pending("start", [], { points: [HERE], picks: { Ключи: HERE }, text: "кольцо через Ключи." });
     expect(answerWithText(asked, " часа на три ")).toEqual({
       text: "кольцо через Ключи. часа на три",
       request_id: 7,
@@ -80,37 +79,77 @@ describe("answering a question", () => {
       picks: { Ключи: HERE },
       understood: null,
     });
-    expect(answerWithText(pending("Ключи"), "40").understood).toBeNull(); // a number answers only a length question
-  });
-});
-
-describe("lengthFromAnswer", () => {
-  it("reads a bare length", () => {
-    expect(lengthFromAnswer("40")).toBe(40);
-    expect(lengthFromAnswer("45,5 км")).toBe(45.5);
-    expect(lengthFromAnswer("Примерно 60 километров.")).toBe(60);
-  });
-
-  it("leaves anything else to the model", () => {
-    for (const text of ["100-150", "часа три", "0", "сорок", "40 км по лесу"]) expect(lengthFromAnswer(text)).toBeNull();
   });
 });
 
 describe("edited", () => {
-  it("resolves the changed request in the setting of the original turn", () => {
-    const turn = { text: "кольцо", requestId: 3, click: HERE, picks: { Ключи: HERE }, understood: loop };
+  it("resolves the changed request in the setting of the original turn, with its points", () => {
+    const turn = { text: "кольцо", requestId: 3, points: [HERE, THERE], picks: { Ключи: HERE }, understood: loop };
     const changed = { ...loop, forest: 1 };
-    expect(edited(turn, changed, null)).toEqual({
+    expect(edited(turn, changed)).toEqual({
       text: "",
       request_id: 3,
-      points: [HERE],
+      points: [HERE, THERE],
       picks: { Ключи: HERE },
       understood: changed,
     });
   });
+});
 
-  it("starts from the marker if it was moved since", () => {
-    const turn = { text: "кольцо", requestId: 3, click: HERE, picks: {}, understood: loop };
-    expect(edited(turn, loop, { lon: 60, lat: 57 }).points).toEqual([{ lon: 60, lat: 57 }]);
+describe("editing the points", () => {
+  const turn = { ...freshTurn([HERE, THERE]), requestId: 3 };
+
+  it("starts from clicks alone with no words and nothing understood", () => {
+    expect(edited(freshTurn([HERE, THERE]), NOTHING_SAID)).toEqual({
+      text: "",
+      request_id: null,
+      points: [HERE, THERE],
+      picks: {},
+      understood: NOTHING_SAID,
+    });
+  });
+
+  it("adds a point at the end, removes one and moves one without touching the rest", () => {
+    expect(withPoint(turn, FAR)).toEqual({ ...turn, points: [HERE, THERE, FAR] });
+    expect(withoutPoint(withPoint(turn, FAR), 1).points).toEqual([HERE, FAR]);
+    expect(movedPoint(turn, 0, FAR)).toEqual({ ...turn, points: [FAR, THERE] });
+    expect(turn.points).toEqual([HERE, THERE]);
+  });
+
+  it("closes the route into a loop and opens it again", () => {
+    const closed = closedLoop(turn, true);
+    expect(closed.understood.shape).toBe("loop");
+    expect(closed.points).toEqual(turn.points);
+    expect(closedLoop(closed, false).understood.shape).toBeNull();
+  });
+
+  it("starts from a place: it takes the first point when that is the start, else goes in front", () => {
+    expect(startingAt(turn, FAR).points).toEqual([FAR, THERE]);
+    const named = { ...turn, understood: { ...NOTHING_SAID, start: "Ревда" } };
+    expect(startingAt(named, FAR).points).toEqual([FAR, HERE, THERE]);
+    expect(startingAt(freshTurn([]), FAR).points).toEqual([FAR]);
+  });
+});
+
+describe("pointRoles", () => {
+  const said = (change: Partial<ParsedRequest>) => ({ ...NOTHING_SAID, ...change });
+  const cases: [string, number, ParsedRequest, (string | number)[]][] = [
+    ["nothing named", 4, NOTHING_SAID, ["start", 1, 2, "finish"]],
+    ["two points", 2, NOTHING_SAID, ["start", "finish"]],
+    ["one point is only the start", 1, NOTHING_SAID, ["start"]],
+    ["no points", 0, NOTHING_SAID, []],
+    ["start named", 3, said({ start: "Ревда" }), [1, 2, "finish"]],
+    ["start named, one point", 1, said({ start: "Ревда" }), ["finish"]],
+    ["end named", 3, said({ end: "Ревда" }), ["start", 1, 2]],
+    ["loop has no finish", 3, said({ shape: "loop" }), ["start", 1, 2]],
+    ["loop with a named start", 3, said({ shape: "loop", start: "Ревда" }), [1, 2, 3]],
+    ["the clicked label names nothing", 3, said({ start: "точка на карте", end: " Точка на карте " }), ["start", 1, "finish"]],
+  ];
+  it.each(cases)("%s", (_, count, understood, roles) => {
+    expect(pointRoles(count, understood)).toEqual(roles);
+  });
+
+  it("treats a missing turn as nothing named", () => {
+    expect(pointRoles(3, null)).toEqual(["start", 1, "finish"]);
   });
 });

@@ -6,15 +6,24 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { Heatmap, LonLat, Point } from "../api";
 import { HEAT_COLOURS, routeColour } from "../palette";
+import type { Role } from "../session";
 import "./map.css";
 
 export interface MapViewProps {
   /** Fit the view to this box ([[west, south], [east, north]]) whenever it changes. */
   frame: [LonLat, LonLat] | null;
-  /** The start marker. */
+  /** The route's start when it is not one of the clicked points (the default place, a named one). */
   start: Point | null;
-  /** Where a point-to-point route ends. */
+  /** Where a point-to-point route ends, when it is not a clicked point. */
   finish: Point | null;
+  /** The clicked points, in order: numbered, draggable markers. */
+  points: Point[];
+  /** What each clicked point is for (`pointRoles`). */
+  roles: Role[];
+  onMovePoint(index: number, point: Point): void;
+  onPointClick(index: number): void;
+  /** Where a new saved place would go (the «Места» tab): a plain marker, no part of the route. */
+  place: Point | null;
   /** Lines of the shown routes; colours come from `routeColour(index)`. */
   routes: LonLat[][];
   /** Index of the chosen route: drawn on top and thicker. */
@@ -42,6 +51,7 @@ setWorkerUrl(workerUrl);
 const STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const ATTRIBUTION = "Высоты: Copernicus DEM GLO-30 · Лес: ESA WorldCover";
 const HIT_PX = 6;
+const DRAG_CLICK_MS = 300;
 const ROUTE_LAYERS = ["map-routes-other", "map-routes-casing", "map-routes-selected"];
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
 
@@ -51,13 +61,16 @@ const filters = (selected: number) => ({
 });
 
 export function MapView(props: MapViewProps) {
-  const { frame, start, finish, routes, walk, selected, options, hover, heatmap, children } = props;
+  const { frame, start, finish, points, roles, place, routes, walk, selected, options, hover, heatmap, children } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibre | null>(null);
   const [loaded, setLoaded] = useState(false);
   const startMarker = useRef<Marker | null>(null);
   const finishMarker = useRef<Marker | null>(null);
   const optionMarkers = useRef<Marker[]>([]);
+  const pointMarkers = useRef<Marker[]>([]);
+  const placeMarker = useRef<Marker | null>(null);
+  const draggedAt = useRef(-Infinity); // a drag ends with a click on the marker, which is not one
 
   // Handlers are read through this ref so that map listeners never call stale callbacks.
   const latest = useRef(props);
@@ -144,6 +157,8 @@ export function MapView(props: MapViewProps) {
       startMarker.current = null;
       finishMarker.current = null;
       optionMarkers.current = [];
+      pointMarkers.current = [];
+      placeMarker.current = null;
       mapRef.current = null;
       setLoaded(false);
       map.remove();
@@ -245,6 +260,47 @@ export function MapView(props: MapViewProps) {
     element.title = finish.label ?? "Финиш";
     finishMarker.current = new Marker({ element }).setLngLat([finish.lon, finish.lat]).addTo(map);
   }, [loaded, finish]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    for (const marker of pointMarkers.current) marker.remove();
+    pointMarkers.current = points.map((point, index) => {
+      const role = roles[index];
+      const element = document.createElement("div");
+      element.className = `map-point map-point-${role === "start" ? "start" : role === "finish" ? "finish" : "via"}`;
+      element.textContent = role === "start" ? "С" : role === "finish" ? "Ф" : String(role);
+      element.title =
+        role === "start"
+          ? points.length > 1
+            ? "Старт: клик замкнёт маршрут в кольцо"
+            : "Старт: клик уберёт точку"
+          : `${role === "finish" ? "Финиш" : `Точка ${role}`}: клик уберёт точку, можно перетащить`;
+      element.addEventListener("click", (event) => {
+        event.stopPropagation(); // otherwise the map would also report a click on empty ground
+        if (performance.now() - draggedAt.current > DRAG_CLICK_MS) latest.current.onPointClick(index);
+      });
+      const marker = new Marker({ element, draggable: true }).setLngLat([point.lon, point.lat]).addTo(map);
+      marker.on("dragend", () => {
+        draggedAt.current = performance.now();
+        const { lng, lat } = marker.getLngLat();
+        latest.current.onMovePoint(index, { lon: lng, lat });
+      });
+      return marker;
+    });
+  }, [loaded, points, roles]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    placeMarker.current?.remove();
+    placeMarker.current = null;
+    if (!place) return;
+    const element = document.createElement("div");
+    element.className = "map-place";
+    element.title = "Здесь будет сохранённое место";
+    placeMarker.current = new Marker({ element }).setLngLat([place.lon, place.lat]).addTo(map);
+  }, [loaded, place]);
 
   useEffect(() => {
     const map = mapRef.current;

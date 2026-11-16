@@ -16,7 +16,7 @@ import {
   type TracksStatus,
   api,
 } from "./api";
-import { chips, without } from "./chips";
+import { chips, pointOf, without } from "./chips";
 import { CandidateCard } from "./components/CandidateCard";
 import { Chat, type Entry } from "./components/Chat";
 import { Chips } from "./components/Chips";
@@ -28,7 +28,24 @@ import { SavedRoutesPanel } from "./components/SavedRoutesPanel";
 import { TracksPanel } from "./components/TracksPanel";
 import { along, bounds, pointAt, walkLines } from "./geo";
 import { routeColour } from "./palette";
-import { type Pending, type Turn, answerWithOption, answerWithPoint, answerWithText, edited, utterance } from "./session";
+import {
+  MAX_POINTS,
+  type Pending,
+  type Role,
+  type Turn,
+  answerWithOption,
+  answerWithPoint,
+  answerWithText,
+  closedLoop,
+  edited,
+  freshTurn,
+  movedPoint,
+  pointRoles,
+  startingAt,
+  utterance,
+  withPoint,
+  withoutPoint,
+} from "./session";
 
 type Tab = "route" | "places" | "saved" | "tracks";
 type Frame = [LonLat, LonLat];
@@ -40,7 +57,9 @@ const TABS: [Tab, string][] = [
   ["tracks", "Треки"],
 ];
 const TRACKS_POLL_MS = 2000;
-const NO_OPTIONS: Point[] = []; // one array for "none", so the map does not redraw markers on every render
+const NO_POINTS: Point[] = []; // one array for "none", so the map does not redraw markers on every render
+const NO_OPTIONS = NO_POINTS;
+const NO_ROLES: Role[] = [];
 const AROUND_HOME_DEG = 0.25; // how much of the map to show around the default place at first
 
 /** A route on the screen: offered just now, or opened from the saved ones. */
@@ -75,7 +94,8 @@ export function App() {
   const [result, setResult] = useState<RouteResponse | null>(null);
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState(0);
-  const [click, setClick] = useState<Point | null>(null); // the start marker, if moved since the last result
+  const [points, setPoints] = useState<Point[]>([]); // clicked on the map, in order: sent with every request
+  const [place, setPlace] = useState<Point | null>(null); // where a new saved place would go
   const [hoverShare, setHoverShare] = useState<number | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
   const [heatmap, setHeatmap] = useState<Heatmap | null>(null);
@@ -143,12 +163,13 @@ export function App() {
     async (body: ParseBody) => {
       setBusy(true);
       setEditing(false);
+      setPoints(body.points);
       try {
         const parsed = await api.parse(body);
         const asked: Turn = {
           text: body.text,
           requestId: body.request_id,
-          click: body.points[0] ?? null,
+          points: body.points,
           picks: body.picks,
           understood: parsed.understood,
         };
@@ -165,7 +186,6 @@ export function App() {
         setResult(routed);
         setSelected(0);
         setHoverShare(null);
-        setClick(null);
         const lines = routed.candidates.map((candidate) => candidate.geometry.coordinates);
         if (lines.length > 0) setFrame(bounds(lines));
         say(
@@ -184,7 +204,7 @@ export function App() {
 
   const onSay = (text: string) => {
     say("rider", text);
-    void ask(pending ? answerWithText(pending, text) : utterance(text, result?.request_id ?? null, click));
+    void ask(pending ? answerWithText(pending, text) : utterance(text, result?.request_id ?? null, points));
   };
 
   const onOption = (index: number) => {
@@ -194,24 +214,54 @@ export function App() {
     void ask(answerWithOption(pending, option));
   };
 
+  /** The setting that point edits are resolved in: the turn behind the result or the question, if any. */
+  const base = (): Turn => ({ ...(pending ?? turn ?? freshTurn([])), points });
+
+  /** A change of the points rebuilds the route without the model; with no turn yet, once there are two. */
+  const changePoints = (next: Turn) => {
+    if (pending || turn || next.points.length >= 2) void ask(edited(next, next.understood));
+    else setPoints(next.points);
+  };
+
   const onMapClick = (point: Point) => {
-    const answer = tab === "route" && pending && !busy ? answerWithPoint(pending, point) : null;
-    if (answer) {
+    if (tab === "places") return setPlace(point);
+    if (tab !== "route" || busy) return;
+    if (pending) {
       say("rider", "точка на карте");
-      if (pending?.question.about === "start") setClick(point);
-      void ask(answer);
+      return void ask(answerWithPoint(pending, point));
+    }
+    if (points.length >= MAX_POINTS) return say("error", `Точек на карте не больше ${MAX_POINTS}.`);
+    changePoints(withPoint(base(), point));
+  };
+
+  const onPointClick = (index: number) => {
+    if (busy) return;
+    const now = base();
+    // With other points around, the start marker closes and opens the loop; alone it is removed like the rest.
+    if (pointRoles(points.length, now.understood)[index] === "start" && points.length >= 2) {
+      changePoints(closedLoop(now, now.understood.shape !== "loop"));
     } else {
-      setClick(point);
+      changePoints(withoutPoint(now, index));
     }
   };
 
+  const onMovePoint = (index: number, point: Point) => {
+    if (!busy) changePoints(movedPoint(base(), index, point));
+  };
+
   const onChange = (request: ParsedRequest) => {
-    if (turn) void ask(edited(turn, request, click));
+    if (turn) void ask(edited({ ...turn, points }, request));
+  };
+
+  const onRemoveChip = (key: string) => {
+    const index = pointOf(key);
+    if (index !== null) changePoints(withoutPoint(base(), index));
+    else if (understood) onChange(without(understood, key));
   };
 
   const onReset = () => {
     // A new route starts from scratch: the next request takes the default place or a fresh click.
-    setClick(null);
+    setPoints([]);
     setSelected(0);
     setPending(null);
     setTurn(null);
@@ -328,11 +378,13 @@ export function App() {
     return line && hoverShare !== null ? pointAt(line, along(line), hoverShare) : null;
   }, [chosen, hoverShare]);
 
-  const start = showingSaved ? (opened?.spec.start ?? null) : (click ?? pending?.click ?? result?.spec.start ?? null);
-  const finish = (showingSaved ? opened?.spec.end : result?.spec.end) ?? null;
   const options = tab === "route" && pending ? pending.question.options : NO_OPTIONS;
   const understood = pending?.understood ?? turn?.understood ?? null;
-  const labels = understood ? chips(understood, pending ? null : (result?.spec ?? null)) : [];
+  const roles = useMemo(() => pointRoles(points.length, understood), [points, understood]);
+  const labels = understood ? chips(understood, pending ? null : (result?.spec ?? null), roles) : [];
+  // The route's own start and finish are drawn as plain dots only where no clicked point stands for them.
+  const start = showingSaved ? (opened?.spec.start ?? null) : roles.includes("start") ? null : (result?.spec.start ?? null);
+  const finish = (showingSaved ? opened?.spec.end : roles.includes("finish") ? null : result?.spec.end) ?? null;
 
   const cards = shown.map((route, index) => (
     <CandidateCard
@@ -380,7 +432,7 @@ export function App() {
               <Chips
                 chips={labels}
                 disabled={busy || pending !== null}
-                onRemove={(key) => understood && onChange(without(understood, key))}
+                onRemove={onRemoveChip}
                 onEdit={() => setEditing(!editing)}
               />
             )}
@@ -393,11 +445,14 @@ export function App() {
         {tab === "places" && (
           <PlacesPanel
             places={places}
-            marker={click}
+            marker={place}
             error={placeError}
-            onAdd={(name) => click && void changePlaces(() => api.addPlace({ name, lon: click.lon, lat: click.lat }))}
+            onAdd={(name) => place && void changePlaces(() => api.addPlace({ name, lon: place.lon, lat: place.lat }))}
             onMakeDefault={(id) => void changePlaces(() => api.changePlace(id, { is_default: true }))}
-            onStartFrom={(place) => setClick({ lon: place.lon, lat: place.lat, label: place.name })}
+            onStartFrom={(chosen) => {
+              setTab("route");
+              changePoints(startingAt(base(), { lon: chosen.lon, lat: chosen.lat, label: chosen.name }));
+            }}
             onDelete={(id) => void changePlaces(() => api.deletePlace(id))}
           />
         )}
@@ -430,6 +485,11 @@ export function App() {
         frame={frame}
         start={start}
         finish={finish}
+        points={showingSaved ? NO_POINTS : points}
+        roles={showingSaved ? NO_ROLES : roles}
+        onMovePoint={onMovePoint}
+        onPointClick={onPointClick}
+        place={tab === "places" ? place : null}
         routes={lines}
         walk={walk}
         selected={chosenIndex}

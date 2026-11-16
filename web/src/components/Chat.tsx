@@ -31,6 +31,8 @@ const EXAMPLES = [
   "кольцо около 45 км к воде, желательно по лесу",
   "80 км от Дидинского тоннеля до Екатеринбурга, поменьше дорог",
   "шоссейный заезд на 100–150 км, кольцевой",
+  "кольцо по лесу от дома",
+  "от Дегтярска до Екатеринбурга через Ревду и Полевской",
 ];
 
 export function Chat({ entries, question, busy, canParse, hasResult, onSay, onOption, onReset, children }: ChatProps) {
@@ -82,7 +84,7 @@ export function Chat({ entries, question, busy, canParse, hasResult, onSay, onOp
                     {example}
                   </button>
                 ))}
-                <p className="chat-muted">Старт — место по умолчанию или клик по карте.</p>
+                <p className="chat-muted">Старт — место по умолчанию. Или кликайте по карте: первая точка — старт, последняя — финиш, остальные — «через».</p>
               </>
             ) : (
               <p className="chat-notice">Разбор текста не настроен: задайте LLM_BASE_URL, LLM_MODEL и LLM_API_KEY на сервере.</p>
@@ -115,7 +117,7 @@ export function Chat({ entries, question, busy, canParse, hasResult, onSay, onOp
             ))}
           </div>
         )}
-        {question && options.length === 0 && question.about !== "length" && <p className="chat-muted">Можно кликнуть по карте.</p>}
+        {question && options.length === 0 && <p className="chat-muted">Можно кликнуть по карте.</p>}
 
         {busy && (
           <div ref={busyLine} className="chat-busy">

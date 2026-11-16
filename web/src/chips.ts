@@ -1,6 +1,7 @@
 // How the request was understood, as short removable labels.
 
 import type { Direction, ParsedRequest, RouteSpec } from "./api";
+import type { Role } from "./session";
 
 export interface Chip {
   key: string; // names the condition for `without`
@@ -44,7 +45,8 @@ function leaning(value: number | null, usual: number, more: string, most: string
   return value >= 0.95 ? most : more;
 }
 
-export function chips(request: ParsedRequest, spec: RouteSpec | null): Chip[] {
+/** `roles` are those of the clicked points (`pointRoles`): each intermediate one gets a chip, keyed `point:<index>`. */
+export function chips(request: ParsedRequest, spec: RouteSpec | null, roles: Role[] = []): Chip[] {
   const found: Chip[] = [];
   const add = (key: string, text: string | null | false, removable = true) => {
     if (text) found.push({ key, text, removable });
@@ -55,6 +57,9 @@ export function chips(request: ParsedRequest, spec: RouteSpec | null): Chip[] {
   else if (spec) add("start", `старт: ${spec.start.label ?? CLICKED_POINT}`, false);
   add("end", request.end && `финиш: ${request.end}`, false);
   for (const name of request.via) add(`via:${name}`, `через: ${name}`);
+  roles.forEach((role, index) => {
+    if (typeof role === "number") add(`point:${index}`, `через: точка ${role}`);
+  });
   add("via_water", request.via_water && "к воде");
   add("length", lengthText(request), false);
   add("surface", request.surface === "paved" ? "по асфальту" : request.surface === "prefer_unpaved" && "по грунтам");
@@ -73,6 +78,11 @@ export function chips(request: ParsedRequest, spec: RouteSpec | null): Chip[] {
   add("toward", request.toward && `в сторону: ${request.toward}`);
   add("candidate", request.candidate !== null && `как вариант ${request.candidate}`);
   return found;
+}
+
+/** The index in the list of clicked points that a chip stands for, or null if it is not one of those. */
+export function pointOf(key: string): number | null {
+  return key.startsWith("point:") ? Number(key.slice("point:".length)) : null;
 }
 
 /** The request with the condition behind `key` taken back. */
