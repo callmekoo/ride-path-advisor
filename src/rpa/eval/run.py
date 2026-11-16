@@ -8,11 +8,13 @@ from itertools import pairwise
 import numpy as np
 
 from rpa.eval.cases import Case
+from rpa.osm.gazetteer import Gazetteer, describe
+from rpa.routing import ring
 from rpa.routing.engine import Engine
 from rpa.routing.generate import generate
 from rpa.routing.geo import EARTH_RADIUS_M
 from rpa.routing.score import Candidate
-from rpa.routing.spec import Point
+from rpa.routing.spec import Around, Point
 
 # Pass criteria from the design (spike S3).
 MIN_CANDIDATES = 2
@@ -30,11 +32,13 @@ class CaseResult:
     candidates: list[Candidate]
     seconds: float
     problems: list[str]  # empty when the case passes
+    around: Around | None = None  # the object the case rides around, as found in the gazetteer
 
 
-def check(case: Case, candidates: list[Candidate], seconds: float) -> list[str]:
+def check(case: Case, candidates: list[Candidate], seconds: float, around: Around | None = None) -> list[str]:
     """What is wrong with the outcome of a case, in words; empty if nothing."""
     problems = []
+    max_repeat_share = MAX_REPEAT_SHARE if case.max_repeat_share is None else case.max_repeat_share
     if len(candidates) < MIN_CANDIDATES:
         problems.append(f"кандидатов {len(candidates)}, нужно не меньше {MIN_CANDIDATES}")
     length = case.spec.length_km
@@ -42,12 +46,14 @@ def check(case: Case, candidates: list[Candidate], seconds: float) -> list[str]:
         km = candidate.path.length_m / 1000
         if length and candidate.note is None and not length.min <= km <= length.max:
             problems.append(f"№{number}: длина {km:.1f} км вне {length.min:.1f}–{length.max:.1f} км")
-        if candidate.features.repeat_share > MAX_REPEAT_SHARE:
+        if candidate.features.repeat_share > max_repeat_share:
             problems.append(f"№{number}: повторов {candidate.features.repeat_share:.0%}")
         missed = _missed_place(candidate.path.coords, case.spec.via)
         if missed is not None:
             problems.append(f"№{number}: место «{missed.label or 'без названия'}» не пройдено по порядку")
-    if case.spec.shape == "loop" and length is None and not case.spec.via:
+        if around is not None and not ring.encloses(candidate.path.coords, around):
+            problems.append(f"№{number}: маршрут не обходит объект")
+    if case.spec.shape == "loop" and length is None and not case.spec.via and case.around_name is None:
         problems += _unlike_sizes([candidate.path.length_m / 1000 for candidate in candidates])
     if case.expect_walk and candidates and candidates[0].features.walk_m == 0:
         problems.append("№1: нет пешего участка")
@@ -79,14 +85,30 @@ def _unlike_sizes(km: list[float]) -> list[str]:
     ]
 
 
-def run_case(engine: Engine, case: Case) -> CaseResult:
+def _object(gazetteer: Gazetteer | None, name: str, near: Point) -> Around | None:
+    """The object called `name` nearest to `near`, with its outline; None if the gazetteer does not know it."""
+    hits = gazetteer.search(name, near=(near.lon, near.lat)) if gazetteer is not None else []
+    place = next((hit.place for hit in hits if hit.exact), None)
+    if place is None:
+        return None
+    point = Point(lon=place.lon, lat=place.lat, label=describe(place))
+    return Around(point=point, radius_m=place.radius_m, outline=list(place.outline))
+
+
+def run_case(engine: Engine, case: Case, gazetteer: Gazetteer | None = None) -> CaseResult:
+    spec, around = case.spec, None
+    if case.around_name is not None:
+        around = _object(gazetteer, case.around_name, case.spec.start)
+        if around is None:
+            return CaseResult(case, [], 0.0, [f"объект «{case.around_name}» не найден в указателе названий"])
+        spec = type(spec).model_validate({**spec.model_dump(), "around": around.model_dump()})
     sizes = engine.loop_sizes_km
     if case.loop_sizes_km is not None:
         engine.set_loop_sizes(case.loop_sizes_km)
     try:
         started = time.perf_counter()
-        candidates = generate(engine, case.spec)
+        candidates = generate(engine, spec)
         seconds = time.perf_counter() - started
     finally:
         engine.set_loop_sizes(sizes)
-    return CaseResult(case, candidates, seconds, check(case, candidates, seconds))
+    return CaseResult(case, candidates, seconds, check(case, candidates, seconds, around), around)

@@ -129,3 +129,77 @@ def test_the_new_canonical_cases_are_there():
     plain = by_name["loop-no-length"]
     assert plain.spec.shape == "loop" and plain.spec.length_km is None and not plain.spec.via
     assert plain.loop_sizes_km == (30.0, 50.0, 80.0)
+
+
+class LakeGazetteer:
+    """Stands in for the graph's gazetteer: one lake filling a block of the grid."""
+
+    def __init__(self, grid, known: str = "озеро Квадратное") -> None:
+        from helpers import rect_outline
+
+        from rpa.osm.gazetteer import Hit, Place
+
+        lon, lat = grid.node_lonlat[10 * 21 + 10]
+        outline = tuple(rect_outline(grid, 8, 12, 8, 12))
+        self.known = known
+        self.hit = Hit(Place(known, "lake", float(lon), float(lat), 1000.0, (), outline), True, True, 0.0)
+
+    def search(self, query, near=None, limit=8):
+        return [self.hit] if query == self.known else []
+
+
+def around_case(grid, name: str = "озеро Квадратное", **changes) -> Case:
+    spec = RouteSpec(start=grid_point(grid, 10, 4), shape="loop")
+    return Case("grid-around", "вокруг озера", spec, around_name=name, **changes)
+
+
+def lake_engine(grid):
+    from helpers import grid_with_hole
+
+    from rpa.routing.engine import Engine
+
+    return Engine(grid_with_hole(grid, 8, 12, 8, 12))
+
+
+def test_a_ride_around_an_object_takes_its_outline_from_the_gazetteer(grid):
+    result = run_case(lake_engine(grid), around_case(grid), LakeGazetteer(grid))
+    assert result.candidates
+    assert not any("обходит" in p or "указател" in p for p in result.problems)
+    assert all("вокруг" in candidate.via_label for candidate in result.candidates)
+
+
+def test_an_object_missing_from_the_gazetteer_is_a_problem_not_a_crash(grid):
+    engine = lake_engine(grid)
+    unknown = run_case(engine, around_case(grid, "озеро Неведомое"), LakeGazetteer(grid))
+    assert unknown.candidates == [] and any("«озеро Неведомое»" in p and "указател" in p for p in unknown.problems)
+    no_gazetteer = run_case(engine, around_case(grid), None)
+    assert any("указател" in p for p in no_gazetteer.problems)
+
+
+def test_check_flags_a_route_that_does_not_go_around_the_object(grid, grid_engine):
+    lake = LakeGazetteer(grid)
+    around = run_case(lake_engine(grid), around_case(grid), lake).around
+    # A loop in the south-west corner of the grid stays beside the lake.
+    corner = RouteSpec(start=grid_point(grid, 2, 2), shape="loop", length_km=LengthKm.around(6))
+    beside = run_case(grid_engine, Case("beside", "кольцо", corner)).candidates
+    problems = check(around_case(grid), beside, 1.0, around)
+    assert any("не обходит" in p for p in problems)
+    # A ride around an object is one loop, not three sizes.
+    assert not any("размер" in p for p in problems)
+
+
+def test_a_case_may_allow_more_repeats_than_usual(grid, grid_engine):
+    case = grid_case(grid, 16.0)
+    first, second = run_case(grid_engine, case).candidates[:2]
+    repeated = dataclasses.replace(first, features=dataclasses.replace(first.features, repeat_share=0.2))
+    assert any("повторов" in p for p in check(case, [repeated, second], 1.0))
+    lenient = dataclasses.replace(case, max_repeat_share=0.3)
+    assert not any("повторов" in p for p in check(lenient, [repeated, second], 1.0))
+
+
+def test_the_around_cases_are_there():
+    by_name = {case.name: case for case in CASES}
+    for name in ("around-shartash", "around-vip", "around-vip-60"):
+        assert by_name[name].around_name and by_name[name].spec.shape == "loop"
+    assert by_name["around-vip"].spec.length_km is None
+    assert by_name["around-vip-60"].spec.length_km.target == 60

@@ -23,6 +23,10 @@ class Case:
     expect_walk: bool = False  # the best route must include a stretch where the bicycle is walked
     # Sizes of a loop without a wanted length; set so that the case does not depend on the ride history.
     loop_sizes_km: tuple[float, float, float] | None = None
+    # The object to ride around, by name: its outline comes from the graph's gazetteer when the case runs,
+    # so no outline has to be committed here.
+    around_name: str | None = None
+    max_repeat_share: float | None = None  # in place of the usual limit, e.g. when the start is far from the object
 
 
 def _loop(km: LengthKm, **prefs) -> RouteSpec:
@@ -76,4 +80,24 @@ CASES = [
         RouteSpec(start=EKB, shape="loop", via=[VERKHNYAYA_PYSHMA, BERYOZOVSKY]),
     ),
     Case("loop-no-length", "кольцо", RouteSpec(start=EKB, shape="loop"), loop_sizes_km=(30.0, 50.0, 80.0)),
+    # The lake lies some 7 km from the start: the way there and back may share a road.
+    Case(
+        "around-shartash",
+        "вокруг Шарташа",
+        RouteSpec(start=EKB, shape="loop"),
+        around_name="озеро Шарташ",
+        max_repeat_share=0.25,
+    ),
+    Case(
+        "around-vip",
+        "вокруг Верх-Исетского пруда",
+        RouteSpec(start=EKB, shape="loop"),
+        around_name="Верх-Исетское водохранилище",
+    ),
+    Case(
+        "around-vip-60",
+        "вокруг Верх-Исетского пруда на 60 км",
+        RouteSpec(start=EKB, shape="loop", length_km=LengthKm.around(60)),
+        around_name="Верх-Исетское водохранилище",
+    ),
 ]

@@ -177,6 +177,7 @@ def eval_command(
     # Imported here: route generation is not needed by the other commands.
     from rpa.eval.cases import CASES
     from rpa.eval.run import run_case
+    from rpa.osm.gazetteer import GAZETTEER_FILE, Gazetteer
     from rpa.routing.engine import load_engine
     from rpa.viz.eval_page import render_eval
 
@@ -189,9 +190,10 @@ def eval_command(
         raise typer.BadParameter(f"нет таких кейсов; доступны: {', '.join(case.name for case in CASES)}")
 
     engine = load_engine(directory)
+    gazetteer = Gazetteer(directory / GAZETTEER_FILE) if (directory / GAZETTEER_FILE).exists() else None
     results = []
     for case in cases:
-        result = run_case(engine, case)
+        result = run_case(engine, case, gazetteer)
         results.append(result)
         lengths = ", ".join(f"{c.path.length_m / 1000:.0f}" for c in result.candidates) or "—"
         repeats = max((c.features.repeat_share for c in result.candidates), default=0.0)
