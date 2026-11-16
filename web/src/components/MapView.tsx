@@ -57,6 +57,7 @@ const ATTRIBUTION = "Высоты: Copernicus DEM GLO-30 · Лес: ESA WorldCov
 const HIT_PX = 6;
 const DRAG_CLICK_MS = 300;
 const GRAB_PX = 5; // a press that moves less than this is a click
+const GESTURE_EVENTS = ["mousemove", "mouseup", "touchstart", "touchmove", "touchend", "touchcancel", "blur"];
 const LONG_PRESS_MS = 350; // a touch grabs the line only after this long, so that scrolling the map still works
 const ROUTE_LAYERS = ["map-routes-other", "map-routes-casing", "map-routes-selected"];
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -198,7 +199,7 @@ export function MapView(props: MapViewProps) {
       };
       const end = (dropped: LonLat | null) => {
         window.clearTimeout(timer);
-        for (const name of ["mousemove", "mouseup", "touchmove", "touchend", "touchcancel", "blur"]) {
+        for (const name of GESTURE_EVENTS) {
           window.removeEventListener(name, handle);
         }
         const dragged = marker !== null;
@@ -213,6 +214,7 @@ export function MapView(props: MapViewProps) {
       };
       const handle = (e: Event) => {
         if (e.type === "blur" || e.type === "touchcancel") return end(null);
+        if (e.type === "touchstart") return !marker && touch ? end(null) : undefined; // a second finger: a pinch, not a grab
         const point = e.type.startsWith("touch") ? (e as TouchEvent).changedTouches[0] : (e as MouseEvent);
         if (!point) return end(null);
         const moved = Math.hypot(point.clientX - from.x, point.clientY - from.y);
@@ -231,7 +233,7 @@ export function MapView(props: MapViewProps) {
         }
       };
       release = () => end(null);
-      for (const name of ["mousemove", "mouseup", "touchmove", "touchend", "touchcancel", "blur"]) {
+      for (const name of GESTURE_EVENTS) {
         window.addEventListener(name, handle, { passive: false });
       }
       if (touch) timer = window.setTimeout(start, LONG_PRESS_MS);

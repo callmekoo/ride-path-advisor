@@ -57,6 +57,7 @@ export function walkLines(coordinates: LonLat[], spans: [number, number][]): Lon
   );
 }
 
+// Compares vertices, not segments: a grab on a stretch ridden twice resolves to the earlier pass.
 function nearestIndex(line: LonLat[], at: LonLat): number {
   const scale = Math.cos(at[1] * RAD); // degrees of longitude shrink away from the equator
   let best = 0;

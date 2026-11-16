@@ -63,11 +63,12 @@ describe("geo", () => {
 
     it("on a loop, a grab on the way home lands after the last intermediate point", () => {
       const there = way.slice(0, 6);
-      const loop: LonLat[] = [...there, ...there.slice(0, -1).reverse()];
-      const points: LonLat[] = [[60, 56], [60.5, 56]]; // the start sits at both ends of the line
+      const home: LonLat[] = there.slice(0, -1).reverse().map(([lon, lat]) => [lon, lat + 0.01]); // a distinct return leg
+      const loop: LonLat[] = [...there, ...home, [60, 56]];
+      const points: LonLat[] = [[60, 56], [60.3, 56]]; // the start sits at both ends of the line
+      expect(insertIndex(loop, points, [60.4, 56.01])).toBe(2);
+      expect(insertIndex(loop, points, [60.1, 56.01])).toBe(2);
       expect(insertIndex(loop, points, [60.2, 56])).toBe(1);
-      expect(insertIndex(loop, points, [60.1, 56.0002])).toBe(1);
-      expect(insertIndex(loop, [[60, 56], [60.3, 56]], [60.4, 56])).toBe(2);
     });
 
     it("with no intermediate points, goes between the ends", () => {
