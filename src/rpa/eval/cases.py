@@ -10,6 +10,9 @@ from rpa.routing.spec import LengthKm, Point, RouteSpec
 
 EKB = Point(lon=60.6057, lat=56.8389, label="Екатеринбург, центр")
 REVDA = Point(lon=59.9303, lat=56.8010, label="Ревда")
+DEGTYARSK = Point(lon=60.0879, lat=56.7040, label="Дегтярск")
+VERKHNYAYA_PYSHMA = Point(lon=60.5944, lat=56.9761, label="Верхняя Пышма")
+BERYOZOVSKY = Point(lon=60.8342, lat=56.9135, label="Берёзовский")
 
 
 @dataclass(frozen=True)
@@ -18,6 +21,8 @@ class Case:
     text: str  # the request as a person would phrase it
     spec: RouteSpec
     expect_walk: bool = False  # the best route must include a stretch where the bicycle is walked
+    # Sizes of a loop without a wanted length; set so that the case does not depend on the ride history.
+    loop_sizes_km: tuple[float, float, float] | None = None
 
 
 def _loop(km: LengthKm, **prefs) -> RouteSpec:
@@ -60,4 +65,15 @@ CASES = [
         ),
         expect_walk=True,
     ),
+    Case(
+        "p2p-revda-via-degtyarsk",
+        "из Екатеринбурга в Ревду через Дегтярск",
+        RouteSpec(start=EKB, end=REVDA, shape="p2p", via=[DEGTYARSK]),
+    ),
+    Case(
+        "loop-via-two",
+        "кольцо из Екатеринбурга через Верхнюю Пышму и Берёзовский",
+        RouteSpec(start=EKB, shape="loop", via=[VERKHNYAYA_PYSHMA, BERYOZOVSKY]),
+    ),
+    Case("loop-no-length", "кольцо", RouteSpec(start=EKB, shape="loop"), loop_sizes_km=(30.0, 50.0, 80.0)),
 ]
