@@ -133,3 +133,8 @@ export function pointRoles(count: number, understood: ParsedRequest | null): Rol
     return ++via;
   });
 }
+
+/** Whether a change of the points builds a route right away: always in the setting of a turn, else from two points. */
+export function rebuilds(hasTurn: boolean, pointCount: number): boolean {
+  return hasTurn || pointCount >= 2;
+}

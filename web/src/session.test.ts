@@ -12,6 +12,7 @@ import {
   freshTurn,
   movedPoint,
   pointRoles,
+  rebuilds,
   startingAt,
   utterance,
   withPoint,
@@ -128,6 +129,18 @@ describe("editing the points", () => {
     const named = { ...turn, understood: { ...NOTHING_SAID, start: "Ревда" } };
     expect(startingAt(named, FAR).points).toEqual([FAR, HERE, THERE]);
     expect(startingAt(freshTurn([]), FAR).points).toEqual([FAR]);
+    expect(startingAt(freshTurn([]), FAR).understood).toEqual(NOTHING_SAID);
+  });
+
+  it("keeps a lone point as the start when the loop is closed", () => {
+    const lone = closedLoop(freshTurn([HERE]), true);
+    expect(pointRoles(lone.points.length, lone.understood)).toEqual(["start"]);
+  });
+
+  it("builds at once in the setting of a turn, otherwise from two points", () => {
+    expect(rebuilds(true, 0)).toBe(true);
+    expect(rebuilds(false, 1)).toBe(false);
+    expect(rebuilds(false, 2)).toBe(true);
   });
 });
 

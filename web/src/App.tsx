@@ -41,6 +41,7 @@ import {
   freshTurn,
   movedPoint,
   pointRoles,
+  rebuilds,
   startingAt,
   utterance,
   withPoint,
@@ -58,7 +59,7 @@ const TABS: [Tab, string][] = [
 ];
 const TRACKS_POLL_MS = 2000;
 const NO_POINTS: Point[] = []; // one array for "none", so the map does not redraw markers on every render
-const NO_OPTIONS = NO_POINTS;
+const NO_OPTIONS: Point[] = [];
 const NO_ROLES: Role[] = [];
 const AROUND_HOME_DEG = 0.25; // how much of the map to show around the default place at first
 
@@ -107,6 +108,9 @@ export function App() {
   const heatmapOnNow = useRef(heatmapOn);
   heatmapOnNow.current = heatmapOn;
   const entryId = useRef(0);
+  const pointsNow = useRef(points);
+  pointsNow.current = points;
+  const inFlight = useRef(false); // one request at a time: the later answer must not overwrite the earlier
 
   const say = useCallback((role: Entry["role"], text: string, notes: string[] = []) => {
     setEntries((log) => [...log, { id: ++entryId.current, role, text, notes }]);
@@ -161,6 +165,9 @@ export function App() {
 
   const ask = useCallback(
     async (body: ParseBody) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      const before = pointsNow.current;
       setBusy(true);
       setEditing(false);
       setPoints(body.points);
@@ -194,8 +201,10 @@ export function App() {
           [...parsed.warnings, ...routed.warnings],
         );
       } catch (error) {
+        setPoints(before); // the shown result still belongs to the points it was built from
         say("error", explain(error));
       } finally {
+        inFlight.current = false;
         setBusy(false);
       }
     },
@@ -219,7 +228,8 @@ export function App() {
 
   /** A change of the points rebuilds the route without the model; with no turn yet, once there are two. */
   const changePoints = (next: Turn) => {
-    if (pending || turn || next.points.length >= 2) void ask(edited(next, next.understood));
+    if (next.points.length > MAX_POINTS) return say("error", `Точек на карте не больше ${MAX_POINTS}.`);
+    if (rebuilds(!!(pending || turn), next.points.length)) void ask(edited(next, next.understood));
     else setPoints(next.points);
   };
 
@@ -228,7 +238,9 @@ export function App() {
     if (tab !== "route" || busy) return;
     if (pending) {
       say("rider", "точка на карте");
-      return void ask(answerWithPoint(pending, point));
+      const answer = answerWithPoint(pending, point);
+      if (answer.points.length > MAX_POINTS) return say("error", `Точек на карте не больше ${MAX_POINTS}.`);
+      return void ask(answer);
     }
     if (points.length >= MAX_POINTS) return say("error", `Точек на карте не больше ${MAX_POINTS}.`);
     changePoints(withPoint(base(), point));
@@ -450,6 +462,7 @@ export function App() {
             onAdd={(name) => place && void changePlaces(() => api.addPlace({ name, lon: place.lon, lat: place.lat }))}
             onMakeDefault={(id) => void changePlaces(() => api.changePlace(id, { is_default: true }))}
             onStartFrom={(chosen) => {
+              if (busy) return;
               setTab("route");
               changePoints(startingAt(base(), { lon: chosen.lon, lat: chosen.lat, label: chosen.name }));
             }}
@@ -487,6 +500,7 @@ export function App() {
         finish={finish}
         points={showingSaved ? NO_POINTS : points}
         roles={showingSaved ? NO_ROLES : roles}
+        locked={busy}
         onMovePoint={onMovePoint}
         onPointClick={onPointClick}
         place={tab === "places" ? place : null}

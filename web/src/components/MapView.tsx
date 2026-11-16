@@ -20,6 +20,8 @@ export interface MapViewProps {
   points: Point[];
   /** What each clicked point is for (`pointRoles`). */
   roles: Role[];
+  /** A request is on its way: the markers cannot be dragged. */
+  locked: boolean;
   onMovePoint(index: number, point: Point): void;
   onPointClick(index: number): void;
   /** Where a new saved place would go (the «Места» tab): a plain marker, no part of the route. */
@@ -61,7 +63,7 @@ const filters = (selected: number) => ({
 });
 
 export function MapView(props: MapViewProps) {
-  const { frame, start, finish, points, roles, place, routes, walk, selected, options, hover, heatmap, children } = props;
+  const { frame, start, finish, points, roles, locked, place, routes, walk, selected, options, hover, heatmap, children } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibre | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -280,7 +282,7 @@ export function MapView(props: MapViewProps) {
         event.stopPropagation(); // otherwise the map would also report a click on empty ground
         if (performance.now() - draggedAt.current > DRAG_CLICK_MS) latest.current.onPointClick(index);
       });
-      const marker = new Marker({ element, draggable: true }).setLngLat([point.lon, point.lat]).addTo(map);
+      const marker = new Marker({ element, draggable: !locked }).setLngLat([point.lon, point.lat]).addTo(map);
       marker.on("dragend", () => {
         draggedAt.current = performance.now();
         const { lng, lat } = marker.getLngLat();
@@ -288,7 +290,7 @@ export function MapView(props: MapViewProps) {
       });
       return marker;
     });
-  }, [loaded, points, roles]);
+  }, [loaded, points, roles, locked]);
 
   useEffect(() => {
     const map = mapRef.current;
