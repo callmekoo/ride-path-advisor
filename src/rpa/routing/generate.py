@@ -14,6 +14,7 @@ All attempts run in a thread pool: the search kernel releases the GIL.
 
 import math
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -28,6 +29,7 @@ from rpa.routing.trim import tidy
 from rpa.routing.walk import route_legs, route_through
 
 # First guess at how much longer roads are than the straight line between two points.
+_TRAILING_KIND = re.compile(r"\s*\([^()]*\)\s*$")
 DETOUR = 1.3
 VIA_COUNTS = (1, 2, 3)
 N_BEARINGS = 12
@@ -119,9 +121,15 @@ def _size_tolerances(sizes: tuple[float, ...]) -> list[float]:
     return tolerances
 
 
+def chain_title(via: list[Point]) -> str | None:
+    """"через: A, B" in riding order; a trailing "(село)" is noise in a title, and "A → B" reads as a route from A to B."""
+    labels = [_TRAILING_KIND.sub("", p.label) or p.label for p in via if p.label]
+    return "через: " + ", ".join(labels) if labels else None
+
+
 def _candidates(engine: Engine, w: np.ndarray, walks: list[Walk], spec: RouteSpec, note: str | None) -> list[Candidate]:
     """The walks that pass their places and are not rejected, measured and scored against `spec`."""
-    chain_label = " → ".join(p.label for p in spec.via if p.label) or None
+    chain_label = chain_title(spec.via)
     measured_walks = []
     for arcs, required in walks:
         # Trimming may have cut the route off from a place it was meant to reach.

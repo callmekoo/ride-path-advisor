@@ -201,7 +201,7 @@ def test_loop_through_a_named_place_passes_it_and_fits_the_length(grid, grid_eng
     for candidate in candidates:
         assert node(14, 12) in nodes_on(grid_engine, candidate)
         assert 14.4 <= candidate.path.length_m / 1000 <= 17.6
-        assert candidate.via_label == "Сысерть" and candidate.note is None
+        assert candidate.via_label == "через: Сысерть" and candidate.note is None
         assert_sound(grid_engine, candidate.path.arcs, node(10, 10), node(10, 10))
 
 
@@ -365,7 +365,7 @@ def test_a_place_on_a_dead_end_road_is_ridden_to_and_back_from(grid):
 
     assert len(candidates) >= 1
     for candidate in candidates:
-        assert fork in nodes_on(engine, candidate) and candidate.via_label == "Мыс"
+        assert fork in nodes_on(engine, candidate) and candidate.via_label == "через: Мыс"
         assert 14.4 <= candidate.path.length_m / 1000 <= 17.6
         assert candidate.features.repeat_share < 0.05  # only the 160 m to the fork and back
 
@@ -422,7 +422,7 @@ def test_point_to_point_passes_two_places_in_the_given_order(grid, grid_engine):
         assert_sound(grid_engine, candidate.path.arcs, node(2, 10), node(18, 10))
         a, b = first_visits(grid_engine, candidate, [node(6, 14), node(14, 6)])
         assert a < b
-        assert candidate.via_label == "А → Б"
+        assert candidate.via_label == "через: А, Б"
 
 
 def test_the_reverse_order_gives_another_route(grid, grid_engine):
@@ -433,7 +433,7 @@ def test_the_reverse_order_gives_another_route(grid, grid_engine):
     for candidate in backward:
         b, a = first_visits(grid_engine, candidate, [node(14, 6), node(6, 14)])
         assert b < a
-        assert candidate.via_label == "Б → А"
+        assert candidate.via_label == "через: Б, А"
 
 
 def test_a_loop_through_two_places_needs_no_length(grid, grid_engine):
@@ -445,12 +445,12 @@ def test_a_loop_through_two_places_needs_no_length(grid, grid_engine):
         assert_sound(grid_engine, candidate.path.arcs, node(10, 10), node(10, 10))
         first, second = first_visits(grid_engine, candidate, [node(*SYSERT), node(*GORA)])
         assert first < second
-        assert candidate.via_label == "Сысерть → Гора" and candidate.note is None
+        assert candidate.via_label == "через: Сысерть, Гора" and candidate.note is None
 
 
 def test_only_labelled_places_name_the_route(grid, grid_engine):
     spec = chain_spec(grid, (*SYSERT, None), (*GORA, "Гора"))
-    assert {c.via_label for c in generate(grid_engine, spec)} == {"Гора"}
+    assert {c.via_label for c in generate(grid_engine, spec)} == {"через: Гора"}
 
 
 def test_a_loop_through_two_places_is_lengthened_to_the_wanted_length(grid, grid_engine):
@@ -493,7 +493,7 @@ def test_a_place_at_the_start_is_dropped_from_the_chain(grid, grid_engine):
 
     assert candidates
     assert [c.path.arcs.tolist() for c in candidates] == [c.path.arcs.tolist() for c in alone]
-    assert candidates[0].via_label == "Дом → Гора"
+    assert candidates[0].via_label == "через: Дом, Гора"
 
 
 def test_a_loop_may_pass_its_start_between_two_places(grid, grid_engine):
@@ -532,7 +532,7 @@ def test_a_place_on_a_dead_end_road_in_a_chain_is_ridden_to_and_back_from(grid):
     for candidate in candidates:
         cape, gora = first_visits(engine, candidate, [fork, node(*GORA)])
         assert cape < gora
-        assert candidate.via_label == "Мыс → Гора"
+        assert candidate.via_label == "через: Мыс, Гора"
 
 
 def test_size_tolerances_keep_neighbouring_bands_apart():
@@ -553,3 +553,17 @@ def test_close_sizes_still_come_back_short_to_long(grid):
     lengths = [c.path.length_m for c in generate(engine, RouteSpec(start=point(grid, 10, 10), shape="loop"))]
 
     assert lengths == sorted(lengths)
+
+
+def test_the_chain_title_drops_a_trailing_kind_and_skips_unlabelled_points(grid):
+    from rpa.routing.generate import chain_title
+
+    via = [
+        named(grid, 4, 4, "Двуреченск (село)"),
+        point(grid, 5, 5),
+        named(grid, 6, 6, "Маминское (село) (бывш.)"),
+        named(grid, 7, 7, "(село) Старое"),
+        named(grid, 8, 8, "Ревда (город), 4 км на восток"),
+    ]
+    assert chain_title(via) == "через: Двуреченск, Маминское (село), (село) Старое, Ревда (город), 4 км на восток"
+    assert chain_title([point(grid, 5, 5)]) is None and chain_title([]) is None

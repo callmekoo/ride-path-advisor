@@ -310,7 +310,7 @@ def test_a_follow_up_shows_the_model_the_previous_request_and_what_was_offered(g
     )
     first = client.post("/api/parse", json={"text": "16 км до Круглого и обратно", "points": [at(grid, 10, 10)]}).json()
     routed = client.post("/api/route", json=first["spec"]).json()
-    assert routed["candidates"][0]["via_label"] == "озеро Круглое"
+    assert routed["candidates"][0]["via_label"] == "через: озеро Круглое"
 
     second = client.post("/api/parse", json={"text": "подлиннее", "request_id": routed["request_id"]}).json()
 
