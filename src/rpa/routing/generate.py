@@ -29,7 +29,6 @@ from rpa.routing.trim import tidy
 from rpa.routing.walk import route_legs, route_through
 
 # First guess at how much longer roads are than the straight line between two points.
-_TRAILING_KIND = re.compile(r"\s*\([^()]*\)\s*$")
 DETOUR = 1.3
 VIA_COUNTS = (1, 2, 3)
 N_BEARINGS = 12
@@ -121,8 +120,12 @@ def _size_tolerances(sizes: tuple[float, ...]) -> list[float]:
     return tolerances
 
 
+# A place found by name is labelled with its kind, "Двуреченск (село)"; in a title the kind is noise.
+_TRAILING_KIND = re.compile(r"\s*\([^()]*\)\s*$")
+
+
 def chain_title(via: list[Point]) -> str | None:
-    """"через: A, B" in riding order; a trailing "(село)" is noise in a title, and "A → B" reads as a route from A to B."""
+    """The places a route passes, in riding order, as «через: A, B» — «A → B» would read as a route from A to B."""
     labels = [_TRAILING_KIND.sub("", p.label) or p.label for p in via if p.label]
     return "через: " + ", ".join(labels) if labels else None
 
