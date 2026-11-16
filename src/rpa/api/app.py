@@ -54,6 +54,7 @@ MAX_SNAP_M = 2000.0
 MAX_PROFILE_POINTS = 500
 
 _NO_WATER_DATA = "В графе нет данных о воде: выполните rpa enrich."
+_NO_RING = "Объехать {} не получается: с одной стороны нет дороги."
 _NOTHING_FOUND = "Не удалось построить маршрут с такими условиями. Попробуйте другую длину или более мягкие ограничения."
 
 
@@ -116,7 +117,13 @@ def create_app(
         bodies = [_body(candidate, spec) for candidate in generate(engine, spec)]
         message = None
         if not bodies:
-            message = _NO_WATER_DATA if spec.via_category == "water" and engine.at_water is None else _NOTHING_FOUND
+            if spec.around is not None:
+                label = spec.around.point.label
+                message = _NO_RING.format(f"«{label}»" if label else "этот объект")
+            elif spec.via_category == "water" and engine.at_water is None:
+                message = _NO_WATER_DATA
+            else:
+                message = _NOTHING_FOUND
         request_id, ids = db.save_request(spec.model_dump_json(), [body.model_dump_json() for body in bodies])
         return RouteResponse(
             request_id=request_id,

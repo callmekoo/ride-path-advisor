@@ -19,7 +19,7 @@ import os
 import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import shapely
@@ -82,8 +82,14 @@ MIN_AROUND_OFFSET_M = 150.0
 # ring cannot be ridden on that side.
 MIN_RING_ANCHORS = 3
 MAX_RING_GAP = 0.4
+# A ring is widened for a wanted length to at most this many equivalent radii plus this much.
+CEILING_RADII, CEILING_EXTRA_M = 3.0, 2000.0
+# Rings of one length differ by being moved off-centre this share of their offset, along each axis.
+RING_SHIFT_SHARE = 0.3
+RING_SHIFTS = ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))
+SAME_WAY_NOTE = "подъезд и возврат по одной дороге"
 # Without a wanted length, a ride around an object is scored as if asked for the shortest ride found,
-# accepting up to this much more.
+# accepting from this much less to this much more; a wanted length beyond reach, likewise from the longest.
 AROUND_SLACK = (0.9, 2.0)
 N_WORKERS = min(8, os.cpu_count() or 1)
 
@@ -561,15 +567,95 @@ def _ring(engine: Engine, w: np.ndarray, start: int, around: Around) -> _Ring:
 
 
 def _around(engine: Engine, w: np.ndarray, start: int, spec: RouteSpec) -> tuple[list[_RingWalk], str | None]:
-    """Rides from `start` once around `spec.around`, as close to it as the roads allow."""
+    """Rides from `start` once around `spec.around`, plus a note if the wanted length cannot be honoured.
+
+    Without a length the ring hugs the object. With one it is widened: a ring `d` further out is
+    some 2πd longer, whatever the way there and back, so the offset is corrected by adding to it.
+    """
     ring = _ring(engine, w, start, spec.around)
     attempts = [(offset, phase, ccw) for offset in ring.offsets() for phase in (0.0, 0.5) for ccw in (True, False)]
 
-    def attempt(shape: tuple[float, float, bool]) -> _RingWalk | None:
+    def tight_attempt(shape: tuple[float, float, bool]) -> _RingWalk | None:
         return _ring_walk(engine, w, ring, *shape)
 
     with ThreadPoolExecutor(N_WORKERS) as pool:
-        return [walk for walk in pool.map(attempt, attempts) if walk is not None], None
+        tight = [walk for walk in pool.map(tight_attempt, attempts) if walk is not None]
+    length = spec.length_km
+    if length is None or not tight:
+        return tight, None
+    shortest = min(tight, key=lambda walk: walk.path.length_m)
+    tight_m = shortest.path.length_m
+    name = _object_name(spec.around)
+    if length.max * 1000 < tight_m:
+        return tight, f"вокруг {name} короче {tight_m / 1000:.0f} км не получится"
+    if length.min * 1000 <= tight_m:
+        return tight, None
+
+    ceiling_m = _around_ceiling_m(spec.around)
+    first_m = shortest.offset_m + (length.target * 1000 - tight_m) / (2 * math.pi * DETOUR)
+    attempts = [(shift, phase, ccw) for shift in RING_SHIFTS for phase in (0.0, 0.5) for ccw in (True, False)]
+
+    def fit_attempt(shape: tuple[tuple[int, int], float, bool]) -> tuple[_RingWalk | None, _RingWalk | None]:
+        return _fit_ring(engine, w, ring, length, first_m, ceiling_m, *shape)
+
+    with ThreadPoolExecutor(N_WORKERS) as pool:
+        results = list(pool.map(fit_attempt, attempts))
+    fitted = [walk for walk in tight if _fits(walk, length)] + [walk for walk, _ in results if walk is not None]
+    if fitted:
+        return fitted, None
+    widest = [walk for _, walk in results if walk is not None] or tight
+    longest_m = max(walk.path.length_m for walk in widest)
+    return widest, f"вокруг {name} длиннее {longest_m / 1000:.0f} км не получится"
+
+
+def _around_ceiling_m(around: Around) -> float:
+    """How far from the object a ring may be laid: beyond this it is a loop that merely has the object inside."""
+    radius = math.sqrt(rings.object_polygon(around).area / math.pi)
+    return CEILING_RADII * radius + CEILING_EXTRA_M
+
+
+def _object_name(around: Around) -> str:
+    """The object as a note names it after «вокруг»."""
+    return f"«{around.point.label}»" if around.point.label else "этого объекта"
+
+
+def _fits(walk: _RingWalk, length: LengthKm) -> bool:
+    return length.min * 1000 <= walk.path.length_m <= length.max * 1000
+
+
+def _fit_ring(
+    engine: Engine,
+    w: np.ndarray,
+    ring: _Ring,
+    length: LengthKm,
+    offset_m: float,
+    ceiling_m: float,
+    shift: tuple[int, int],
+    phase: float,
+    ccw: bool,
+) -> tuple[_RingWalk | None, _RingWalk | None]:
+    """A ride around the object of the wanted length, if one is found, and the longest too short one.
+
+    The offset grows by the missing length over 2π·DETOUR each time, up to `ceiling_m`. `shift`
+    names the axis the ring is moved along, by RING_SHIFT_SHARE of its offset.
+    """
+    longest = None
+    for _ in range(MAX_FIT_ITERATIONS):
+        offset_m = min(max(offset_m, ring.offsets()[0]), ceiling_m)
+        moved = (shift[0] * RING_SHIFT_SHARE * offset_m, shift[1] * RING_SHIFT_SHARE * offset_m)
+        walk = _ring_walk(engine, w, ring, offset_m, phase, ccw, moved)
+        if walk is None:
+            break
+        if _fits(walk, length):
+            return walk, longest
+        metres = walk.path.length_m
+        if metres < length.min * 1000:
+            if longest is None or metres > longest.path.length_m:
+                longest = walk
+            if offset_m >= ceiling_m:
+                break
+        offset_m += (length.target * 1000 - metres) / (2 * math.pi * DETOUR)
+    return None, longest
 
 
 def _ring_walk(
@@ -601,7 +687,7 @@ def _ring_walk(
     if border.distance(start_point) < step / 2:
         start_slot = int(np.argmin(_along(positions, border.project(start_point), border.length)))
 
-    def beside(slot: int):
+    def beside(slot: int) -> Callable[[np.ndarray], np.ndarray]:
         def keep(near: np.ndarray) -> np.ndarray:
             xy = rings.to_local(engine.g.node_lonlat[near], ring.origin)
             outside = ~shapely.contains_xy(ring.polygon, xy[:, 0], xy[:, 1])
@@ -668,11 +754,21 @@ def _around_candidates(engine: Engine, w: np.ndarray, start: int, spec: RouteSpe
     judged = spec.model_copy(update={"length_km": None}) if note is not None else spec
     measured = [(walk, features(engine, w, walk.arcs, judged.length_km)) for walk in walks]
     passed = [(walk, m) for walk, m in measured if rejection(m, judged) is None]
-    length = judged.length_km
+    if not passed:
+        # From afar, the only road to the object may be the one back from it: offer the ride all the same.
+        retraced = [(walk, m) for walk, m in measured if rejection(replace(m, repeat_share=0.0), judged) is None]
+        if retraced:
+            passed = [min(retraced, key=lambda pair: pair[1].repeat_share)]
+            note = SAME_WAY_NOTE if note is None else f"{note}; {SAME_WAY_NOTE}"
+    length = spec.length_km if note is None else None
     if length is None and passed:
-        # Without a wanted length the ride hugs the object: longer ones lose against the shortest.
-        km = min(m.length_m for _, m in passed) / 1000
-        length = LengthKm(target=km, min=AROUND_SLACK[0] * km, max=AROUND_SLACK[1] * km)
+        # Rate the rides against the nearest length they can have: without a wanted length, or below
+        # what can be had, the shortest, so that the ride hugs the object; above it, the longest.
+        km = [m.length_m / 1000 for _, m in passed]
+        if spec.length_km is not None and spec.length_km.target > max(km):
+            length = LengthKm(target=max(km), min=max(km) / AROUND_SLACK[1], max=max(km) / AROUND_SLACK[0])
+        else:
+            length = LengthKm(target=min(km), min=AROUND_SLACK[0] * min(km), max=AROUND_SLACK[1] * min(km))
     label = around_title(spec.around)
     candidates = [Candidate(walk.path, m, score(m, length), note, label, core_arcs=walk.core) for walk, m in passed]
     return select_diverse(candidates, spec.n_candidates, engine.length)

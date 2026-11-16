@@ -1,9 +1,11 @@
 """Route generation on a synthetic 10 km x 10 km street grid (500 m blocks)."""
 
+import re
+
 import numpy as np
 import pytest
 
-from helpers import grid_with_hole, rect_outline, with_walked_cut
+from helpers import grid_with_hole, rect_outline, with_walked_cut, without_edges
 
 from rpa.routing.cost import Prefs
 from rpa.routing.diversity import core_edges, overlap
@@ -657,3 +659,56 @@ def test_a_loop_around_an_object_is_deterministic(grid, hole_engine):
     first = generate(hole_engine, around_spec(grid, 10, 5))
     second = generate(hole_engine, around_spec(grid, 10, 5))
     assert [c.path.arcs.tolist() for c in first] == [c.path.arcs.tolist() for c in second]
+
+
+def test_a_loop_around_a_lake_is_widened_to_the_wanted_length(grid, hole_engine):
+    spec = around_spec(grid, 8, 10, km=16.0)  # twice the ride along the shore
+    candidates = generate(hole_engine, spec)
+    assert_around(hole_engine, candidates, spec, 8, 10)
+    for candidate in candidates:
+        assert 14.4 <= candidate.path.length_m / 1000 <= 17.6
+        assert candidate.note is None
+
+
+def test_a_loop_around_a_lake_shorter_than_the_shore_gets_a_note(grid, hole_engine):
+    spec = around_spec(grid, 8, 10, km=4.0)
+    candidates = generate(hole_engine, spec)
+    assert_around(hole_engine, candidates, spec, 8, 10)
+    assert candidates[0].path.length_m == pytest.approx(8000, rel=0.01)
+    assert candidates[0].note == "вокруг «Тестовое (озеро)» короче 8 км не получится"
+
+
+def test_a_loop_around_a_small_object_stops_widening_at_the_ceiling(grid):
+    from rpa.routing.generate import _around_ceiling_m
+
+    engine = Engine(grid_with_hole(grid, 9, 11, 9, 11))
+    lon, lat = grid.node_lonlat[node(10, 10)].tolist()
+    around = Around(point=Point(lon=lon, lat=lat), radius_m=300.0)
+    spec = RouteSpec(start=point(grid, 9, 10), shape="loop", length_km=LengthKm.around(40), around=around)
+    candidates = generate(engine, spec)
+    assert_around(engine, candidates, spec, 9, 10)
+    # A ring 3 km out at most: some 26 km on the grid's streets.
+    assert _around_ceiling_m(around) < 3000
+    longest = max(c.path.length_m for c in candidates) / 1000
+    assert 20 < longest < 30
+    # The note names the longest ride found, which need not be the best one offered.
+    note = re.fullmatch(r"вокруг этого объекта длиннее (\d+) км не получится", candidates[0].note)
+    assert note and round(longest) <= int(note[1]) < 30
+
+
+def corridor_with_hole(grid):
+    """A pond at node (15, 10) whose only way in from the west is the 7 km street along row j = 10."""
+    graph = grid_with_hole(grid, 14, 16, 9, 11)
+    u, v = np.asarray(graph.edge_u), np.asarray(graph.edge_v)
+    across = (v - u == 1) & (u % 21 < 14) & (u // 21 != 10)
+    return without_edges(graph, across)
+
+
+def test_a_far_start_with_one_road_there_gets_the_least_repeating_ride_with_a_note(grid):
+    engine = Engine(corridor_with_hole(grid))
+    spec = around_spec(grid, 0, 10, box=(14, 16, 9, 11))
+    candidates = generate(engine, spec)
+    assert len(candidates) == 1
+    assert_around(engine, candidates, spec, 0, 10)
+    assert candidates[0].features.repeat_share > 0.3
+    assert candidates[0].note == "подъезд и возврат по одной дороге"

@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from helpers import grid_with_hole, rect_outline
 
 from rpa.api.app import create_app
 from rpa.api.jobs import TrackImport
@@ -175,6 +176,35 @@ def test_impossible_request_explains_itself(client, grid):
 
     assert body["candidates"] == []
     assert body["message"]
+
+
+def around(grid, i0: int, i1: int, label: str | None) -> dict:
+    """An object over the blocks between the streets i0..i1 and j = 6..14."""
+    outline = [list(point) for point in rect_outline(grid, i0, i1, 6, 14)]
+    lon, lat = np.mean(outline, axis=0).tolist()
+    return {"point": {"lon": lon, "lat": lat, "label": label}, "radius_m": 1000, "outline": outline}
+
+
+@pytest.mark.parametrize(("label", "named"), [("Тестовое (озеро)", "«Тестовое (озеро)»"), (None, "этот объект")])
+def test_an_object_with_no_road_on_one_side_explains_itself(grid, tmp_path, label, named):
+    # The object reaches past the eastern edge of the map.
+    engine = Engine(grid_with_hole(grid, 15, 22, 6, 14))
+    client = TestClient(create_app(engine, tmp_path / "rpa.sqlite"))
+    spec = {"start": at(grid, 15, 10), "shape": "loop", "around": around(grid, 15, 22, label)}
+    body = client.post("/api/route", json=spec).json()
+
+    assert body["candidates"] == []
+    assert body["message"] == f"Объехать {named} не получается: с одной стороны нет дороги."
+
+
+def test_a_ride_around_an_object_is_titled_by_it(grid, tmp_path):
+    engine = Engine(grid_with_hole(grid, 8, 12, 6, 14))
+    client = TestClient(create_app(engine, tmp_path / "rpa.sqlite"))
+    spec = {"start": at(grid, 8, 10), "shape": "loop", "around": around(grid, 8, 12, "Тестовое (озеро)")}
+    body = client.post("/api/route", json=spec).json()
+
+    assert body["message"] is None
+    assert body["candidates"][0]["title"].endswith(" · вокруг: Тестовое")
 
 
 def test_candidate_downloads_as_gpx(client, grid):
