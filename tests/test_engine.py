@@ -120,3 +120,15 @@ def test_loop_sizes_are_read_from_the_graph_directory(grid, tmp_path):
 
     (tmp_path / SIZES_FILE).write_text("not json")
     assert load_engine(tmp_path).loop_sizes_km == DEFAULT_LOOP_SIZES_KM
+
+
+@pytest.mark.parametrize(
+    "text", ['{"km": [25, NaN, 60]}', '{"km": [0, 40, 60]}', '{"km": [-5, 40, 60]}', '{"km": [40, 25, 60]}',
+             '{"km": [25, 25, 60]}', '{"km": [25, 40, Infinity]}', '{"km": [25, 40]}']
+)
+def test_a_loop_sizes_file_that_is_not_three_ascending_positive_numbers_is_ignored(tmp_path, text):
+    from rpa.routing.engine import read_loop_sizes
+
+    path = tmp_path / "ride_sizes.json"
+    path.write_text(text)
+    assert read_loop_sizes(path) is None

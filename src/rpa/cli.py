@@ -8,7 +8,7 @@ import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import numpy as np
 import typer
@@ -23,6 +23,9 @@ from rpa.osm.tags import Highway, Surface
 from rpa.routing.cost import Prefs, arc_weights
 from rpa.routing.path import build_path
 from rpa.viz.map import render_map
+
+if TYPE_CHECKING:
+    from rpa.tracks.store import TrackSet
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
@@ -251,13 +254,12 @@ def _write_rides(directory: Path, graph: GraphData) -> np.ndarray:
     return rides
 
 
-def _write_ride_sizes(directory: Path) -> None:
+def _write_ride_sizes(directory: Path, tracks: "TrackSet") -> None:
     """Store the loop sizes the ride history suggests next to the graph; no suggestion, no (stale) file."""
     from rpa.match.sizes import ride_sizes_km
     from rpa.routing.engine import SIZES_FILE
-    from rpa.tracks.store import load_tracks
 
-    sizes = ride_sizes_km(load_tracks(config.tracks_dir()))
+    sizes = ride_sizes_km(tracks)
     path = directory / SIZES_FILE
     if sizes is None:
         path.unlink(missing_ok=True)
@@ -304,7 +306,7 @@ def match_command(
     share = report.matched_km / report.track_km if report.track_km else 0.0
     typer.echo(f"Привязано {report.matched_km:.0f} из {report.track_km:.0f} км ({share:.0%}), не удалось: {report.failed} сегм.")
     _write_rides(directory.resolve(), graph)
-    _write_ride_sizes(directory.resolve())
+    _write_ride_sizes(directory.resolve(), tracks)
 
 
 @app.command("sync-tracks")

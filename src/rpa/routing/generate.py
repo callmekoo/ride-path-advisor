@@ -69,9 +69,11 @@ Walk = tuple[np.ndarray, tuple[int, ...]]
 
 
 def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
-    """Up to `spec.n_candidates` distinct routes, best first; empty if nothing fits.
+    """Up to `spec.n_candidates` distinct routes; empty if nothing fits.
 
-    A loop with neither a length nor places gives one route per size instead, short to long.
+    The strictly distinct picks come first, best first, then the looser refill when a route through
+    places has too few. A loop with neither a length nor places gives one route per size instead,
+    short to long by measured length.
     """
     w = _with_avoided(engine, engine.weights(spec.prefs), spec.avoid)
     start, _ = engine.snapper.nearest_node(spec.start.lon, spec.start.lat)
@@ -102,6 +104,19 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
     if places and len(chosen) < spec.n_candidates:
         chosen = select_diverse(candidates, spec.n_candidates, engine.length, VIA_MAX_OVERLAP, chosen=chosen)
     return _with_profiles(engine, chosen)
+
+
+def _size_tolerances(sizes: tuple[float, ...]) -> list[float]:
+    """How far from each size a loop may be: LOOP_SIZE_TOLERANCE, less where neighbouring sizes are close.
+
+    Sizes from the ride history may be only 20 % apart; their bands must not overlap, or the "short"
+    loop could come out longer than the "medium" one.
+    """
+    tolerances = []
+    for i, size in enumerate(sizes):
+        gaps = [abs(other - size) / (other + size) for other in sizes[max(i - 1, 0) : i + 2] if other != size]
+        tolerances.append(min(LOOP_SIZE_TOLERANCE, *gaps))
+    return tolerances
 
 
 def _candidates(engine: Engine, w: np.ndarray, walks: list[Walk], spec: RouteSpec, note: str | None) -> list[Candidate]:
@@ -136,7 +151,10 @@ def _one_per_size(
     candidates = [
         _candidates(engine, w, walks, spec.model_copy(update={"length_km": length}), None) for length, walks in groups
     ]
-    return select_by_size(candidates, engine.length)[: spec.n_candidates]
+    chosen = select_by_size(candidates, engine.length)
+    # Bands of neighbouring sizes do not overlap, so this only guards the order.
+    chosen.sort(key=lambda candidate: candidate.path.length_m)
+    return chosen[: spec.n_candidates]
 
 
 def _with_profiles(engine: Engine, chosen: list[Candidate]) -> list[Candidate]:
@@ -308,9 +326,10 @@ def _loops(
     if length is not None:
         sizes = [(length, [360.0 * i / N_BEARINGS for i in range(N_BEARINGS)])]
     else:
+        tolerances = _size_tolerances(engine.loop_sizes_km)
         sizes = [
             (
-                LengthKm.around(km, LOOP_SIZE_TOLERANCE),
+                LengthKm.around(km, tolerances[s]),
                 [360.0 * i / N_SIZE_BEARINGS + SIZE_BEARING_SHIFT_DEG * s for i in range(N_SIZE_BEARINGS)],
             )
             for s, km in enumerate(engine.loop_sizes_km)

@@ -1,6 +1,7 @@
 """Engine: a loaded graph with everything route generation needs around it."""
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -46,6 +47,9 @@ def read_loop_sizes(path: Path) -> tuple[float, float, float] | None:
         km = json.loads(path.read_text())["km"]
         a, b, c = (float(size) for size in km)
     except (OSError, ValueError, KeyError, TypeError):
+        return None
+    # A hand-edited or damaged file must not break every loop without a length.
+    if not (all(math.isfinite(size) for size in (a, b, c)) and 0 < a < b < c):
         return None
     return a, b, c
 

@@ -533,3 +533,23 @@ def test_a_place_on_a_dead_end_road_in_a_chain_is_ridden_to_and_back_from(grid):
         cape, gora = first_visits(engine, candidate, [fork, node(*GORA)])
         assert cape < gora
         assert candidate.via_label == "Мыс → Гора"
+
+
+def test_size_tolerances_keep_neighbouring_bands_apart():
+    from rpa.routing.generate import LOOP_SIZE_TOLERANCE, _size_tolerances
+
+    assert _size_tolerances((30.0, 50.0, 80.0)) == [LOOP_SIZE_TOLERANCE] * 3
+    sizes = (20.0, 25.0, 30.0)
+    bands = [(km * (1 - t), km * (1 + t)) for km, t in zip(sizes, _size_tolerances(sizes), strict=True)]
+    for (_, high), (low, _) in zip(bands, bands[1:], strict=False):
+        assert high <= low + 1e-9
+    assert all(t <= LOOP_SIZE_TOLERANCE for t in _size_tolerances(sizes))
+
+
+def test_close_sizes_still_come_back_short_to_long(grid):
+    engine = Engine(grid)
+    engine.set_loop_sizes((6.0, 7.2, 8.6))
+
+    lengths = [c.path.length_m for c in generate(engine, RouteSpec(start=point(grid, 10, 10), shape="loop"))]
+
+    assert lengths == sorted(lengths)

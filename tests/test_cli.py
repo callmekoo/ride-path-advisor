@@ -206,15 +206,11 @@ def ride_history(*km: float):
 
 def test_match_stores_loop_sizes_of_the_ride_history_and_drops_stale_ones(data_dir):
     from rpa import cli
-    from rpa.tracks.store import save_tracks
-
     current = data_dir / "graph" / "current"
-    save_tracks(ride_history(*np.linspace(20, 60, 21)), data_dir / "tracks")
-    cli._write_ride_sizes(current)
+    cli._write_ride_sizes(current, ride_history(*np.linspace(20, 60, 21)))
     assert json.loads((current / "ride_sizes.json").read_text()) == {"km": [30.0, 40.0, 50.0]}
 
-    save_tracks(ride_history(30, 40), data_dir / "tracks")  # too few rides now
-    cli._write_ride_sizes(current)
+    cli._write_ride_sizes(current, ride_history(30, 40))  # too few rides now
     assert not (current / "ride_sizes.json").exists()
 
 

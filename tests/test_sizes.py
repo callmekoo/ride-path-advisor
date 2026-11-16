@@ -59,3 +59,10 @@ def test_a_step_of_exactly_twenty_percent_is_enough():
     assert ride_sizes_km(lengths(*([25.0] * 6 + [30.0] * 8 + [36.0] * 6 + [60.0]))) is None
     # 25 / 30 / 40: both steps reach 20 %.
     assert ride_sizes_km(lengths(*([25.0] * 6 + [30.0] * 8 + [40.0] * 7))) == (25.0, 30.0, 40.0)
+
+
+def test_sizes_are_rounded_half_up(monkeypatch):
+    # Quartiles exactly 22.5 / 32.5 / 47.5: Python's round would give 20 / 30 / 50 (half to even).
+    exact = np.array([22.5] * 6 + [32.5] * 8 + [47.5] * 7)
+    monkeypatch.setattr("rpa.match.sizes.ride_lengths_km", lambda tracks: exact)
+    assert ride_sizes_km(trackset([(length, False) for length in exact])) == (25.0, 35.0, 50.0)

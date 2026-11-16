@@ -1,5 +1,7 @@
 """Loop sizes that fit the rider: quartiles of the length of their own rides."""
 
+import math
+
 import numpy as np
 
 from rpa.graph.store import COORD_SCALE
@@ -32,7 +34,7 @@ def ride_sizes_km(tracks: TrackSet) -> tuple[float, float, float] | None:
     lengths = lengths[counted]
     if len(lengths) < MIN_RIDES:
         return None
-    short, medium, long = (float(round(q / ROUND_KM) * ROUND_KM) for q in np.percentile(lengths, [25, 50, 75]))
+    short, medium, long = (math.floor(q / ROUND_KM + 0.5) * ROUND_KM for q in np.percentile(lengths, [25, 50, 75]))
     if medium < MIN_STEP * short or long < MIN_STEP * medium:
         return None
     return short, medium, long

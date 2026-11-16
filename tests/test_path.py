@@ -77,6 +77,14 @@ def test_snapper_with_rideable_mask_skips_walk_only_nodes(grid):
     assert sorted(near.tolist()) == sorted([10 * 21 + 9, 10 * 21 + 11, 9 * 21 + 10, 11 * 21 + 10])
 
 
+def test_a_rideable_mask_with_no_node_marked_falls_back_to_all_nodes(grid):
+    point = tuple(grid.node_lonlat[10 * 21 + 10])
+
+    node, distance = Snapper(grid, np.zeros(grid.n_nodes, dtype=bool)).nearest_node(*point)
+
+    assert node == 10 * 21 + 10 and distance == pytest.approx(0, abs=0.5)
+
+
 def test_engine_snaps_only_to_rideable_nodes(grid):
     from rpa.routing.engine import Engine
 
