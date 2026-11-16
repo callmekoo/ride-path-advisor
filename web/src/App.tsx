@@ -40,7 +40,7 @@ import {
   closedLoop,
   edited,
   freshTurn,
-  lineDragRefusal,
+  frameAfter,
   movedPoint,
   pinnedEnds,
   pointRoles,
@@ -169,7 +169,7 @@ export function App() {
   }, [polling, showTracks]);
 
   const ask = useCallback(
-    async (body: ParseBody) => {
+    async (body: ParseBody, fromMap = false) => {
       if (inFlight.current) return;
       inFlight.current = true;
       const before = pointsNow.current;
@@ -189,7 +189,8 @@ export function App() {
           setPending({ ...asked, question: parsed.question });
           say("service", parsed.question.text, parsed.warnings);
           const offered = parsed.question.options.map((option): LonLat => [option.lon, option.lat]);
-          if (offered.length > 0) setFrame(bounds([offered]));
+          const view = frameAfter(fromMap, [offered]);
+          if (view) setFrame(view);
           return;
         }
         const routed = await api.route(parsed.spec!);
@@ -199,7 +200,8 @@ export function App() {
         setSelected(0);
         setHoverShare(null);
         const lines = routed.candidates.map((candidate) => candidate.geometry.coordinates);
-        if (lines.length > 0) setFrame(bounds(lines));
+        const view = frameAfter(fromMap, lines);
+        if (view) setFrame(view);
         const notes = [...parsed.warnings, ...routed.warnings];
         say(
           "service",
@@ -234,10 +236,13 @@ export function App() {
   /** The setting that point edits are resolved in: the turn behind the result or the question, if any. */
   const base = (): Turn => ({ ...(pending ?? turn ?? freshTurn([])), points });
 
-  /** A change of the points rebuilds the route without the model; with no turn yet, once there are two. */
-  const changePoints = (next: Turn) => {
+  /**
+   * A change of the points rebuilds the route without the model; with no turn yet, once there are two.
+   * `fromMap`: the edit was made on the map itself, which then stays where it is.
+   */
+  const changePoints = (next: Turn, fromMap: boolean) => {
     if (next.points.length > MAX_POINTS) return say("error", `Точек на карте не больше ${MAX_POINTS}.`);
-    if (rebuilds(!!(pending || turn), next.points.length)) void ask(edited(next, next.understood));
+    if (rebuilds(!!(pending || turn), next.points.length)) void ask(edited(next, next.understood), fromMap);
     else setPoints(next.points);
   };
 
@@ -251,7 +256,7 @@ export function App() {
       return void ask(answer);
     }
     if (points.length >= MAX_POINTS) return say("error", `Точек на карте не больше ${MAX_POINTS}.`);
-    changePoints(withPoint(base(), point));
+    changePoints(withPoint(base(), point), true);
   };
 
   const onPointClick = (index: number) => {
@@ -259,25 +264,23 @@ export function App() {
     const now = base();
     // With other points around, the start marker closes and opens the loop; alone it is removed like the rest.
     if (pointRoles(points.length, now.understood)[index] === "start" && points.length >= 2) {
-      changePoints(closedLoop(now, now.understood.shape !== "loop"));
+      changePoints(closedLoop(now, now.understood.shape !== "loop"), true);
     } else {
-      changePoints(withoutPoint(now, index));
+      changePoints(withoutPoint(now, index), true);
     }
   };
 
   const onMovePoint = (index: number, point: Point) => {
-    if (!busy) changePoints(movedPoint(base(), index, point));
+    if (!busy) changePoints(movedPoint(base(), index, point), true);
   };
 
   /** The selected route's line was dragged: a new intermediate point where it was dropped, between its neighbours. */
   const onDragLine = (grabbed: LonLat, dropped: LonLat) => {
     const line = chosen?.body.geometry.coordinates;
     if (busy || pending || !turn || !result || showingSaved || !line) return;
-    const refusal = lineDragRefusal(turn.understood);
-    if (refusal) return say("error", refusal);
     const now = pinnedEnds(base(), result.spec);
     const index = insertIndex(line, now.points.map((point): LonLat => [point.lon, point.lat]), grabbed);
-    changePoints(withPointAt(now, index, { lon: dropped[0], lat: dropped[1] }));
+    changePoints(withPointAt(now, index, { lon: dropped[0], lat: dropped[1] }), true);
   };
 
   const onChange = (request: ParsedRequest) => {
@@ -286,7 +289,7 @@ export function App() {
 
   const onRemoveChip = (key: string) => {
     const index = pointOf(key);
-    if (index !== null) changePoints(withoutPoint(base(), index));
+    if (index !== null) changePoints(withoutPoint(base(), index), false);
     else if (understood) onChange(without(understood, key));
   };
 
@@ -483,7 +486,7 @@ export function App() {
             onStartFrom={(chosen) => {
               if (busy) return;
               setTab("route");
-              changePoints(startingAt(base(), { lon: chosen.lon, lat: chosen.lat, label: chosen.name }));
+              changePoints(startingAt(base(), { lon: chosen.lon, lat: chosen.lat, label: chosen.name }), false);
             }}
             onDelete={(id) => void changePlaces(() => api.deletePlace(id))}
           />

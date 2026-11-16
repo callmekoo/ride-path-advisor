@@ -10,8 +10,8 @@ import {
   appended,
   closedLoop,
   edited,
+  frameAfter,
   freshTurn,
-  lineDragRefusal,
   movedPoint,
   pinnedEnds,
   pointRoles,
@@ -213,13 +213,22 @@ describe("pinning the ends before inserting a point", () => {
   });
 });
 
-describe("lineDragRefusal", () => {
-  it("refuses a line drag when places are named in words", () => {
-    expect(lineDragRefusal(loop)).toContain("перетаскиванием линии не правится");
+describe("frameAfter", () => {
+  const line: [number, number][] = [
+    [60, 56],
+    [61, 57],
+  ];
+
+  it("frames the routes found, except after an edit of the points on the map", () => {
+    expect(frameAfter(false, [line])).toEqual([
+      [60, 56],
+      [61, 57],
+    ]);
+    expect(frameAfter(true, [line])).toBeNull();
   });
 
-  it("allows it otherwise", () => {
-    expect(lineDragRefusal({ ...NOTHING_SAID, shape: "loop" })).toBeNull();
+  it("has nothing to frame without routes", () => {
+    expect(frameAfter(false, [])).toBeNull();
   });
 });
 

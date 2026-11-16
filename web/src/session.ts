@@ -1,7 +1,8 @@
 // The conversation with the server, as pure functions: each returns the body of the next POST /api/parse.
 
-import type { ParseBody, ParsedRequest, Point, Question, RouteSpec } from "./api";
+import type { LonLat, ParseBody, ParsedRequest, Point, Question, RouteSpec } from "./api";
 import { CLICKED_POINT } from "./chips";
+import { bounds } from "./geo";
 
 export const NOTHING_SAID: ParsedRequest = {
   shape: null,
@@ -161,13 +162,12 @@ export function rebuilds(hasTurn: boolean, pointCount: number): boolean {
   return hasTurn || pointCount >= 2;
 }
 
-/** Why a drag of the route's line is refused, or null when it is allowed. */
-export function lineDragRefusal(understood: ParsedRequest): string | null {
-  // Places named in words are always ridden before the clicked points, so a point dragged out of the
-  // stretch before one of them would be ridden after it: the route would double back.
-  return understood.via.length > 0
-    ? "Маршрут с местами, названными словами, перетаскиванием линии не правится: уберите чип «через: …» или поставьте точку кликом."
-    : null;
+/**
+ * Where to bring the map after routes were found, or null to leave it alone: a result of editing the points
+ * on the map must not move the view under the rider's hand while they place the rest of the points.
+ */
+export function frameAfter(fromMap: boolean, lines: LonLat[][]): [LonLat, LonLat] | null {
+  return fromMap ? null : bounds(lines);
 }
 
 /**
