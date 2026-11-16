@@ -110,6 +110,8 @@ def create_app(
         warnings = _check_point(engine, spec.start, "старт")
         if spec.end is not None:
             warnings += _check_point(engine, spec.end, "финиш")
+        for number, point in enumerate(spec.via, start=1):
+            warnings += _check_point(engine, point, point.label or f"промежуточная точка {number}")
 
         bodies = [_body(candidate, spec) for candidate in generate(engine, spec)]
         message = None
@@ -154,7 +156,7 @@ def create_app(
                 raise HTTPException(502, str(error)) from None
 
         if body.points:
-            parsed = without_clicked(parsed)
+            parsed = without_clicked(parsed, body.points)
         context = Context(
             snapper=engine.snapper,
             gazetteer=gazetteer,

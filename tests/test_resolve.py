@@ -297,7 +297,38 @@ def test_a_clicked_via_label_is_resolved_from_the_previous_request(context):
 def test_clicked_labels_are_dropped_when_points_are_sent():
     parsed = ParsedRequest(start="точка на карте", end=" Точка на карте ", via=["точка 1", "Ревда", "Точка 12"])
 
-    cleaned = without_clicked(parsed)
+    cleaned = without_clicked(parsed, [Point(lon=60.0, lat=56.8)])
 
     assert (cleaned.start, cleaned.end, cleaned.via) == (None, None, ["Ревда"])
     assert parsed.via == ["точка 1", "Ревда", "Точка 12"]  # the original is untouched
+
+
+def test_a_named_start_or_finish_equal_to_the_label_of_a_sent_point_is_that_point():
+    points = [Point(lon=60.0, lat=56.8, label="Дом"), Point(lon=60.1, lat=56.9), Point(lon=60.2, lat=56.9, label="Ревда")]
+    parsed = ParsedRequest(start=" дом ", end="РЕВДА", via=["Ключи"])
+
+    cleaned = without_clicked(parsed, points)
+
+    assert (cleaned.start, cleaned.end, cleaned.via) == (None, None, ["Ключи"])
+
+
+def test_a_name_that_is_not_the_label_of_the_first_or_last_point_stays():
+    points = [Point(lon=60.0, lat=56.8, label="Дом"), Point(lon=60.2, lat=56.9, label="Ревда")]
+
+    kept = without_clicked(ParsedRequest(start="Ревда", end="Дом"), points)
+
+    assert (kept.start, kept.end) == ("Ревда", "Дом")
+
+
+def test_a_clicked_finish_asked_for_without_one_is_a_question(context):
+    resolved = resolve(ParsedRequest(end="точка на карте"), context)
+
+    assert resolved.spec is None and (resolved.question.about, resolved.question.text) == ("end", "Кликните по карте, куда едем.")
+
+
+def test_the_previous_clicked_start_is_not_taken_for_a_clicked_finish(context):
+    context.previous = RouteSpec(start=Point(lon=60.1, lat=56.82, label="точка на карте"), shape="loop")
+
+    resolved = resolve(ParsedRequest(end="точка на карте"), context)
+
+    assert resolved.spec is None and resolved.question.about == "end"

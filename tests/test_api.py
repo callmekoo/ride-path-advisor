@@ -138,6 +138,22 @@ def test_end_outside_the_map_is_refused(client, grid):
     assert "финиш" in response.json()["detail"]
 
 
+def test_an_intermediate_point_is_checked_like_the_ends(client, grid):
+    far, near = at(grid, 10, 10), at(grid, 0, 10)  # the grid's edge: no closer road
+    far["lat"] -= 1.0
+    near["lon"] -= 1.0 * DEGREES_PER_KM_EAST
+    spec = {"start": at(grid, 2, 10), "end": at(grid, 18, 10), "shape": "p2p"}
+
+    refused = client.post("/api/route", json={**spec, "via": [far]})
+    assert refused.status_code == 422 and "промежуточная точка 1" in refused.json()["detail"]
+
+    far["label"] = "Ключи"
+    assert "Ключи" in client.post("/api/route", json={**spec, "via": [far]}).json()["detail"]
+
+    body = client.post("/api/route", json={**spec, "via": [at(grid, 6, 10), near]}).json()
+    assert len(body["warnings"]) == 1 and "промежуточная точка 2" in body["warnings"][0]
+
+
 def test_start_a_little_off_the_roads_gives_a_warning(client, grid):
     start = at(grid, 0, 10)
     start["lon"] -= 1.0 * DEGREES_PER_KM_EAST
@@ -394,6 +410,20 @@ def test_too_many_intermediate_points_are_refused_in_words(client, grid):
     assert refused.status_code == 422 and refused.json()["detail"] == "Промежуточных точек может быть не больше 8."
     assert client.post("/api/parse", json={"understood": named, "points": nine[:8]}).status_code == 200
     assert client.post("/api/parse", json={"points": [at(grid, i, 4) for i in range(2, 12)]}).status_code == 422
+
+
+def test_a_named_start_echoed_for_a_clicked_home_keeps_the_points_roles(grid_engine, grid, tmp_path):
+    client, _ = text_client(grid_engine, tmp_path, {"length_km": 20, "start": "дом"})
+    home = {**at(grid, 10, 10), "label": "дом"}
+    points = [home, at(grid, 16, 16)]
+    first = client.post("/api/parse", json={"points": points}).json()
+    routed = client.post("/api/route", json=first["spec"]).json()
+
+    second = client.post("/api/parse", json={"text": "подлиннее", "request_id": routed["request_id"], "points": points}).json()
+
+    assert second["understood"]["start"] is None
+    assert second["spec"]["start"]["lon"] == home["lon"] and second["spec"]["via"] == []
+    assert second["spec"]["end"]["lon"] == at(grid, 16, 16)["lon"]
 
 
 # Saved routes

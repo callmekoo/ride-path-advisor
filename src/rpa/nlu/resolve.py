@@ -102,18 +102,25 @@ def _is_clicked_via(name: str) -> bool:
     return bool(_CLICKED_VIA.match(name.strip().casefold()))
 
 
-def without_clicked(parsed: ParsedRequest) -> ParsedRequest:
-    """The request with its labels of clicked points taken out.
+def _same_name(name: str | None, label: str | None) -> bool:
+    return bool(name) and bool(label) and name.strip().casefold() == label.strip().casefold()
+
+
+def without_clicked(parsed: ParsedRequest, points: list[Point]) -> ParsedRequest:
+    """The request with the names of the clicked points taken out.
 
     When points are sent they are the whole truth about clicked places; labels the model echoed
-    from an earlier request would only name them a second time.
+    from an earlier request would only name them a second time. That includes a real name a point
+    carries (a saved place picked as the start, a finish chosen among options): echoed back it is
+    still the first or the last point, not a place named in words.
     """
+    start, end = parsed.start, parsed.end
+    if not _is_named(start) or (points and _same_name(start, points[0].label)):
+        start = None
+    if not _is_named(end) or (points and _same_name(end, points[-1].label)):
+        end = None
     return parsed.model_copy(
-        update={
-            "start": parsed.start if _is_named(parsed.start) else None,
-            "end": parsed.end if _is_named(parsed.end) else None,
-            "via": [name for name in parsed.via if not _is_clicked_via(name)],
-        }
+        update={"start": start, "end": end, "via": [name for name in parsed.via if not _is_clicked_via(name)]}
     )
 
 
@@ -132,6 +139,8 @@ def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
     if end is None and clicked_end is not None:
         end = _Found(_labelled(clicked_end, CLICKED_POINT))
     if end is None and parsed.end:
+        if not _is_named(parsed.end):
+            raise _Ask(Question(text="Кликните по карте, куда едем.", about="end"))
         end = _find(parsed.end, context, near)
     via = [_find(name, context, near) for name in parsed.via]
     via += [_Found(_labelled(point, f"точка {number}")) for number, point in enumerate(clicked_via, start=1)]
