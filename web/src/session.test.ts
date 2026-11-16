@@ -13,7 +13,7 @@ import {
 } from "./session";
 
 const HERE: Point = { lon: 60.6, lat: 56.84 };
-const loop: ParsedRequest = { ...NOTHING_SAID, shape: "loop", via: "Ключи" };
+const loop: ParsedRequest = { ...NOTHING_SAID, shape: "loop", via: ["Ключи"] };
 
 function pending(about: string, options: Point[] = [], extra: Partial<Pending> = {}): Pending {
   return {

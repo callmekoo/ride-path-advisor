@@ -4,7 +4,7 @@ import pytest
 
 from rpa.graph.snap import Snapper
 from rpa.nlu.prompt import ParsedRequest
-from rpa.nlu.resolve import Context, resolve
+from rpa.nlu.resolve import Context, assign_points, resolve
 from rpa.osm.gazetteer import Gazetteer, Place, build_gazetteer
 from rpa.routing.spec import LengthKm, Point, RouteSpec
 
@@ -74,14 +74,14 @@ def test_preferences_are_carried_over(context):
 def test_start_is_the_named_place_then_the_click_then_the_previous_then_the_default(context, grid):
     click = Point(lon=60.05, lat=56.85)
     previous = RouteSpec(start=Point(lon=60.1, lat=56.82, label="раньше"), shape="loop", length_km=LengthKm.around(30))
-    context.click, context.previous = click, previous
+    context.points, context.previous = [click], previous
 
     named = resolve(ParsedRequest(length_km=45, start="работа"), context).spec.start
     assert position(named) == at(grid, 3, 3) and named.label == "работа"
     clicked = resolve(ParsedRequest(length_km=45), context).spec.start
     assert position(clicked) == (60.05, 56.85) and clicked.label == "точка на карте"
 
-    context.click = None
+    context.points = []
     assert resolve(ParsedRequest(length_km=45), context).spec.start.label == "раньше"
     context.previous = None
     assert resolve(ParsedRequest(length_km=45), context).spec.start.label == "Дом"
@@ -95,7 +95,7 @@ def test_the_clicked_point_can_be_named_in_words(context):
     parsed = ParsedRequest(length_km=45, start="точка на карте")
     assert resolve(parsed, context).question.about == "start"
 
-    context.click = Point(lon=60.05, lat=56.85)
+    context.points = [Point(lon=60.05, lat=56.85)]
     assert position(resolve(parsed, context).spec.start) == (60.05, 56.85)
 
 
@@ -142,7 +142,7 @@ def test_a_loop_without_a_length_is_left_to_the_generator(context):
 
 
 def test_namesakes_that_are_both_plausible_are_asked_about(context, grid):
-    resolved = resolve(ParsedRequest(length_km=20, via="Ключи"), context)
+    resolved = resolve(ParsedRequest(length_km=20, via=["Ключи"]), context)
 
     question = resolved.question
     assert resolved.spec is None and question.about == "Ключи" and "несколько" in question.text
@@ -153,12 +153,12 @@ def test_namesakes_that_are_both_plausible_are_asked_about(context, grid):
     ]
 
     context.picks = {"Ключи": question.options[1]}
-    spec = resolve(ParsedRequest(length_km=20, via="Ключи"), context).spec
+    spec = resolve(ParsedRequest(length_km=20, via=["Ключи"]), context).spec
     assert [position(point) for point in spec.via] == [at(grid, 18, 10)] and spec.via[0].label == "Ключи (село), 4 км на восток"
 
 
 def test_a_namesake_far_away_is_not_asked_about(context, grid):
-    spec = resolve(ParsedRequest(length_km=20, via="Сосновка"), context).spec
+    spec = resolve(ParsedRequest(length_km=20, via=["Сосновка"]), context).spec
     assert [position(point) for point in spec.via] == [at(grid, 10, 14)] and spec.via[0].label == "Сосновка (деревня)"
 
 
@@ -178,7 +178,7 @@ def test_water_in_general_and_a_named_lake_are_different_wishes(context, grid):
     general = resolve(ParsedRequest(length_km=45, via_water=True), context).spec
     assert general.via_category == "water" and general.via == []
 
-    resolved = resolve(ParsedRequest(length_km=45, via="озеро Круглое", via_water=True), context)
+    resolved = resolve(ParsedRequest(length_km=45, via=["озеро Круглое"], via_water=True), context)
     assert resolved.spec.via_category is None and [position(point) for point in resolved.spec.via] == [at(grid, 16, 16)]
     assert len(resolved.warnings) == 1 and "озеро Круглое" in resolved.warnings[0]
 
@@ -221,3 +221,65 @@ def test_a_place_far_from_any_road_comes_with_a_warning(context):
 
     assert resolved.spec.end.label == "Острая (гора)"
     assert len(resolved.warnings) == 1 and "Острая" in resolved.warnings[0] and "до ближайшей дороги" in resolved.warnings[0]
+
+
+A, B, C, D = (Point(lon=60.0 + i / 100, lat=56.8, label=None) for i in range(4))
+
+
+@pytest.mark.parametrize(
+    ("points", "start_named", "end_named", "loop", "expected"),
+    [
+        ([], False, False, False, (None, [], None)),
+        ([], True, True, True, (None, [], None)),
+        ([A], False, False, False, (A, [], None)),
+        ([A, B], False, False, False, (A, [], B)),
+        ([A, B, C, D], False, False, False, (A, [B, C], D)),
+        ([A], True, False, False, (None, [], A)),
+        ([A, B, C], True, False, False, (None, [A, B], C)),
+        ([A, B, C], False, True, False, (A, [B, C], None)),
+        ([A, B, C], True, True, False, (None, [A, B, C], None)),
+        ([A, B, C], False, False, True, (A, [B, C], None)),
+        ([A, B, C], True, False, True, (None, [A, B, C], None)),
+        ([A], False, False, True, (A, [], None)),
+    ],
+)
+def test_clicked_points_get_their_roles_from_what_the_text_names(points, start_named, end_named, loop, expected):
+    assert assign_points(points, start_named, end_named, loop) == expected
+
+
+def test_named_places_pass_in_the_order_said_and_before_the_clicked_ones(context, grid):
+    parsed = ParsedRequest(start="работа", end="Ревда", via=["Сосновка", "Дегтярск"])
+    context.points = [Point(lon=60.07, lat=56.86), Point(lon=60.08, lat=56.87)]
+    context.saved_places.append({"name": "Дегтярск", "lon": 60.2, "lat": 56.9, "is_default": False})
+    spec = resolve(parsed, context).spec
+
+    assert [point.label for point in spec.via] == ["Сосновка (деревня)", "Дегтярск", "точка 1", "точка 2"]
+    assert spec.end.label == "Ревда (город)" and spec.shape == "p2p"
+
+
+def test_clicked_points_alone_make_a_route_from_the_first_to_the_last(context):
+    points = [Point(lon=60.05, lat=56.85), Point(lon=60.06, lat=56.86), Point(lon=60.07, lat=56.87)]
+    context.points = points
+    spec = resolve(ParsedRequest(), context).spec
+
+    assert spec.shape == "p2p" and spec.start.label == "точка на карте" and spec.end.label == "точка на карте"
+    assert [position(point) for point in spec.via] == [(60.06, 56.86)] and spec.via[0].label == "точка 1"
+
+    spec = resolve(ParsedRequest(shape="loop"), context).spec
+    assert spec.shape == "loop" and spec.end is None
+    assert [point.label for point in spec.via] == ["точка 1", "точка 2"]
+
+
+def test_a_namesake_in_the_middle_of_the_list_is_asked_about(context):
+    resolved = resolve(ParsedRequest(end="Ревда", via=["Сосновка", "Ключи", "Острая"]), context)
+
+    assert resolved.spec is None and resolved.question.about == "Ключи" and len(resolved.question.options) == 3
+
+
+def test_a_refinement_keeps_all_the_via_places_and_a_loop_is_not_steered_by_them(context, grid):
+    first = Point(lon=at(grid, 18, 10)[0], lat=at(grid, 18, 10)[1], label="Ключи (село), 4 км на восток")
+    second = Point(lon=at(grid, 4, 4)[0], lat=at(grid, 4, 4)[1], label="Ревда (город)")
+    context.previous = RouteSpec(start=Point(lon=60.1, lat=56.82), shape="loop", via=[first, second])
+
+    spec = resolve(ParsedRequest(shape="loop", via=[first.label, second.label], direction="E"), context).spec
+    assert spec.via == [first, second] and spec.bearing_deg is None

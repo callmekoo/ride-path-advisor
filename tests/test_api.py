@@ -290,7 +290,7 @@ def test_without_a_start_the_service_asks_and_a_click_answers(grid_engine, grid,
 
 def test_a_follow_up_shows_the_model_the_previous_request_and_what_was_offered(grid_engine, grid, tmp_path):
     client, llm = text_client(
-        grid_engine, tmp_path, {"length_km": 16, "via": "озеро Круглое"}, {"length_km": 20, "via": "озеро Круглое"}
+        grid_engine, tmp_path, {"length_km": 16, "via": ["озеро Круглое"]}, {"length_km": 20, "via": ["озеро Круглое"]}
     )
     first = client.post("/api/parse", json={"text": "16 км до Круглого и обратно", "click": at(grid, 10, 10)}).json()
     routed = client.post("/api/route", json=first["spec"]).json()
@@ -299,7 +299,7 @@ def test_a_follow_up_shows_the_model_the_previous_request_and_what_was_offered(g
     second = client.post("/api/parse", json={"text": "подлиннее", "request_id": routed["request_id"]}).json()
 
     follow_up = llm.asked[1]
-    assert 'Предыдущий запрос: {' in follow_up and '"via":"озеро Круглое"' in follow_up and '"length_km":16.0' in follow_up
+    assert 'Предыдущий запрос: {' in follow_up and '"via":["озеро Круглое"]' in follow_up and '"length_km":16.0' in follow_up
     assert "Предложенные варианты:\n1. Кольцо" in follow_up and "озеро Круглое; лес 0%" in follow_up
     assert follow_up.endswith("Новая реплика: подлиннее") and "60." not in follow_up
     assert second["spec"]["length_km"]["target"] == 20

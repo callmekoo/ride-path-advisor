@@ -24,7 +24,7 @@ class ParsedRequest(BaseModel):
     shape: Literal["loop", "p2p"] | None = None
     start: str | None = None
     end: str | None = None
-    via: str | None = None
+    via: list[str] = []
     via_water: bool | None = None
     length_km: float | None = Field(default=None, gt=0)
     length_min_km: float | None = Field(default=None, gt=0)
@@ -43,18 +43,19 @@ class ParsedRequest(BaseModel):
 SYSTEM = f"""\
 Ты разбираешь запросы велосипедиста на построение маршрута и заполняешь структуру. \
 Маршрут строит другая программа; твоя задача — только понять, что сказано. \
-Поле, о котором в запросе ничего не сказано, оставляй null (для avoid — пустой список). Ничего не выдумывай.
+Поле, о котором в запросе ничего не сказано, оставляй null (для via и avoid — пустой список). Ничего не выдумывай.
 
 Поля:
 - shape: "loop" — кольцо, круг, заезд с возвращением в точку старта; "p2p" — из одной точки в другую («от … до …»). \
-Если назван финиш, отличный от старта, это "p2p". «До X и обратно» — это "loop" с via = X.
-- start, end, via, toward и элементы avoid — названия мест. Пиши их в именительном падеже, как на карте, \
+Если назван финиш, отличный от старта, это "p2p". «До X и обратно» — это "loop" с via = ["X"].
+- start, end, toward и элементы via и avoid — названия мест. Пиши их в именительном падеже, как на карте, \
 без предлогов: «от Дидинского тоннеля» → "Дидинский тоннель", «до Ревды» → "Ревда". Слово, говорящее, что это \
 за объект (озеро, река, станция, гора), сохраняй: "озеро Шарташ". Сохранённые места пользователя («дом», «дача» — \
 их список дан в запросе) пиши так, как они названы в списке. Если пользователь говорит «отсюда» или «от точки на \
 карте», пиши "{CLICKED_POINT}".
 - start: только если старт назван явно. «Из дома» → "дом".
-- via: место, через которое нужно проехать или до которого нужно доехать в кольце.
+- via: список мест, через которые нужно проехать или до которых нужно доехать в кольце, в порядке упоминания: \
+«из A в B через C и D» → ["C", "D"].
 - via_water: true, если хочется к воде вообще («к воде», «к озеру», «искупаться»), а конкретный водоём не назван. \
 Если водоём назван, это via, а via_water — null.
 - length_km: желаемая длина в километрах («около 45 км», «на 80»). Диапазон «100–150 км» — это length_min_km и \
@@ -109,7 +110,7 @@ def describe(spec: RouteSpec) -> ParsedRequest:
     return ParsedRequest(
         shape=spec.shape,
         end=spec.end.label if spec.end else None,
-        via=spec.via[0].label if spec.via else None,
+        via=[point.label for point in spec.via if point.label],
         via_water=True if spec.via_category == "water" else None,
         length_km=round(length.target, 1) if length and about else None,
         length_min_km=round(length.min, 1) if length and not about else None,

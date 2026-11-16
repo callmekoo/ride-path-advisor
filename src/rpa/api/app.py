@@ -155,7 +155,7 @@ def create_app(
             snapper=engine.snapper,
             gazetteer=gazetteer,
             saved_places=saved_places,
-            click=body.click,
+            points=[body.click] if body.click else [],
             previous=previous,
             previous_candidates=[candidate.geometry.coordinates for candidate in offered],
             picks=body.picks,

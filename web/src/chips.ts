@@ -54,7 +54,7 @@ export function chips(request: ParsedRequest, spec: RouteSpec | null): Chip[] {
   if (request.start) add("start", `старт: ${request.start}`);
   else if (spec) add("start", `старт: ${spec.start.label ?? CLICKED_POINT}`, false);
   add("end", request.end && `финиш: ${request.end}`, false);
-  add("via", request.via && `через: ${request.via}`);
+  for (const name of request.via) add(`via:${name}`, `через: ${name}`);
   add("via_water", request.via_water && "к воде");
   add("length", lengthText(request), false);
   add("surface", request.surface === "paved" ? "по асфальту" : request.surface === "prefer_unpaved" && "по грунтам");
@@ -78,7 +78,8 @@ export function chips(request: ParsedRequest, spec: RouteSpec | null): Chip[] {
 /** The request with the condition behind `key` taken back. */
 export function without(request: ParsedRequest, key: string): ParsedRequest {
   if (key.startsWith("avoid:")) return { ...request, avoid: request.avoid.filter((name) => `avoid:${name}` !== key) };
+  if (key.startsWith("via:")) return { ...request, via: request.via.filter((name) => `via:${name}` !== key) };
   if (key === "length") return { ...request, length_km: null, length_min_km: null, length_max_km: null };
-  if (key in request && key !== "avoid") return { ...request, [key]: null };
+  if (key in request && key !== "avoid" && key !== "via") return { ...request, [key]: null };
   return request;
 }

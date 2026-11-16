@@ -38,7 +38,7 @@ export interface ParsedRequest {
   shape: "loop" | "p2p" | null;
   start: string | null;
   end: string | null;
-  via: string | null;
+  via: string[];
   via_water: boolean | null;
   length_km: number | null;
   length_min_km: number | null;

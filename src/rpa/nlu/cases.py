@@ -57,16 +57,27 @@ CASES = [
     Case("кольцо 60 км", {"shape": "loop", "length_km": 60, "start": None, "surface": None, "via_water": NOT_SET}),
     Case("хочу покататься часа три по грунтам", {"length_km": ("range", 50, 70), "surface": "prefer_unpaved"}),
     Case("лёгкая покатушка на часок", {"length_km": ("range", 15, 26)}),
-    Case("до Сысерти и обратно, не больше 120 км", {"shape": "loop", "via": "Сысерть", "length_max_km": 120}),
+    Case("до Сысерти и обратно, не больше 120 км", {"shape": "loop", "via": ["Сысерть"], "length_max_km": 120}),
     Case("хотя бы 80 км на юго-запад", {"length_min_km": 80, "direction": "SW"}),
     Case("80-100 км, покрытие не важно", {"length_min_km": 80, "length_max_km": 100, "surface": ("in", ["any", None])}),
     Case("шоссе 120", {"surface": "paved", "length_km": 120}),
     # Places.
     Case("от дома до Ревды", {"shape": "p2p", "start": "дом", "end": "Ревда"}),
     Case("отсюда до Екатеринбурга", {"shape": "p2p", "start": "точка на карте", "end": "Екатеринбург"}),
-    Case("с дачи в Ревду через Дегтярск", {"start": "дача", "end": "Ревда", "via": "Дегтярск"}),
-    Case("кольцо 80 км через озеро Таватуй", {"shape": "loop", "via": "озеро Таватуй", "via_water": NOT_SET}),
-    Case("кольцо 45 км к озеру Шарташ", {"via": "озеро Шарташ", "via_water": NOT_SET, "length_km": 45}),
+    Case("с дачи в Ревду через Дегтярск", {"start": "дача", "end": "Ревда", "via": ["Дегтярск"]}),
+    Case(
+        "из Екатеринбурга в Ревду через Дегтярск и Первоуральск",
+        {"shape": "p2p", "start": "Екатеринбург", "end": "Ревда", "via": ["Дегтярск", "Первоуральск"]},
+    ),
+    Case(
+        "от дома до Сысерти через Арамиль, потом через Двуреченск",
+        {"shape": "p2p", "start": "дом", "end": "Сысерть", "via": ["Арамиль", "Двуреченск"]},
+    ),
+    Case("кольцо через Ревду и Дегтярск", {"shape": "loop", "via": ["Ревда", "Дегтярск"], "length_km": None}),
+    Case("кольцо от дома", {"shape": "loop", "start": "дом", "via": [], "length_km": None}),
+    Case("по лесу от дома", {"start": "дом", "forest": MOSTLY, "length_km": None, "via": []}),
+    Case("кольцо 80 км через озеро Таватуй", {"shape": "loop", "via": ["озеро Таватуй"], "via_water": NOT_SET}),
+    Case("кольцо 45 км к озеру Шарташ", {"via": ["озеро Шарташ"], "via_water": NOT_SET, "length_km": 45}),
     Case(
         "от станции Шарташ до Верх-Исетского пруда",
         {"shape": "p2p", "start": "станция Шарташ", "end": "Верх-Исетский пруд"},
@@ -110,5 +121,5 @@ CASES = [
         _TO_TOWN,
         _TO_TOWN_OFFERED,
     ),
-    Case("через Дегтярск", {"via": "Дегтярск", "end": "Екатеринбург", "shape": "p2p"}, _TO_TOWN, _TO_TOWN_OFFERED),
+    Case("через Дегтярск", {"via": ["Дегтярск"], "end": "Екатеринбург", "shape": "p2p"}, _TO_TOWN, _TO_TOWN_OFFERED),
 ]

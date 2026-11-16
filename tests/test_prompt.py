@@ -56,9 +56,19 @@ def test_a_range_and_named_places_are_described_too():
     )
     described = describe(spec)
 
-    assert (described.shape, described.end, described.via) == ("p2p", "Ревда (город)", "Волчиха (гора)")
+    assert (described.shape, described.end, described.via) == ("p2p", "Ревда (город)", ["Волчиха (гора)"])
     assert (described.length_km, described.length_min_km, described.length_max_km) == (None, 100.0, 150.0)
     assert described.start is None and described.direction is None and described.via_water is None
+
+
+def test_every_via_place_is_described_and_unlabelled_ones_are_left_out():
+    spec = RouteSpec(
+        start=HOME,
+        shape="loop",
+        via=[Point(lon=60.2, lat=56.75, label="Волчиха (гора)"), Point(lon=60.3, lat=56.7), Point(lon=60.4, lat=56.6, label="точка 2")],
+    )
+
+    assert describe(spec).via == ["Волчиха (гора)", "точка 2"]
 
 
 def test_a_fresh_request_is_just_the_words_and_the_saved_places():

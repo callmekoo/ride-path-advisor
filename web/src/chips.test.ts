@@ -36,6 +36,14 @@ describe("chips", () => {
     ]);
   });
 
+  it("show one removable chip for each named place to pass, in order", () => {
+    const found = chips({ ...NOTHING_SAID, via: ["Дегтярск", "Ревда"] }, spec).filter((chip) => chip.key.startsWith("via:"));
+    expect(found.map((chip) => [chip.key, chip.text, chip.removable])).toEqual([
+      ["via:Дегтярск", "через: Дегтярск", true],
+      ["via:Ревда", "через: Ревда", true],
+    ]);
+  });
+
   it("keep quiet about defaults that the model spelled out", () => {
     const request = {
       ...NOTHING_SAID,
@@ -82,11 +90,11 @@ describe("chips", () => {
 });
 
 describe("without", () => {
-  const request = { ...NOTHING_SAID, via: "Ключи", forest: 0.7, length_min_km: 100, length_max_km: 150, avoid: ["Ревда", "Дегтярск"] };
+  const request = { ...NOTHING_SAID, via: ["Ключи", "Дегтярск"], forest: 0.7, length_min_km: 100, length_max_km: 150, avoid: ["Ревда", "Дегтярск"] };
 
   it("takes back one condition and nothing else", () => {
     expect(without(request, "forest")).toEqual({ ...request, forest: null });
-    expect(without(request, "via")).toEqual({ ...request, via: null });
+    expect(without(request, "via:Ключи")).toEqual({ ...request, via: ["Дегтярск"] });
     expect(without(request, "avoid:Ревда")).toEqual({ ...request, avoid: ["Дегтярск"] });
     expect(without(request, "length")).toEqual({ ...request, length_min_km: null, length_max_km: null });
   });
@@ -94,5 +102,6 @@ describe("without", () => {
   it("ignores what it does not know", () => {
     expect(without(request, "nonsense")).toEqual(request);
     expect(without(request, "avoid")).toEqual(request);
+    expect(without(request, "via")).toEqual(request);
   });
 });

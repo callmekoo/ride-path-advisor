@@ -6,7 +6,7 @@ export const NOTHING_SAID: ParsedRequest = {
   shape: null,
   start: null,
   end: null,
-  via: null,
+  via: [],
   via_water: null,
   length_km: null,
   length_min_km: null,

@@ -123,7 +123,7 @@ export function RequestEditor({ request, onApply, onCancel }: RequestEditorProps
         <input
           type="checkbox"
           checked={draft.via_water === true}
-          disabled={request.via !== null}
+          disabled={request.via.length > 0}
           onChange={(event) => change({ via_water: event.target.checked ? true : null })}
         />
         К воде

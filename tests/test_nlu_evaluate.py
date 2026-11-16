@@ -14,6 +14,15 @@ def test_expectations_compare_values_ranges_alternatives_and_place_names():
     assert mismatches(ParsedRequest(), {"length_km": ("range", 1, 2), "via_water": True}) != []
 
 
+def test_via_places_are_compared_in_order_and_loosely():
+    parsed = ParsedRequest(via=["город Дегтярск", "Ревда"])
+
+    assert mismatches(parsed, {"via": ["Дегтярск", "Ревда"]}) == []
+    assert mismatches(parsed, {"via": ["Ревда", "Дегтярск"]}) != []
+    assert mismatches(parsed, {"via": ["Дегтярск"]}) != []
+    assert mismatches(ParsedRequest(), {"via": []}) == []
+
+
 def test_reference_cases_only_expect_fields_that_exist():
     assert len(CASES) >= 40
     for case in CASES:

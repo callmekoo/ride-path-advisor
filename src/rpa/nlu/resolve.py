@@ -48,7 +48,7 @@ class Context:
     snapper: Snapper
     gazetteer: Gazetteer | None = None
     saved_places: list[dict] = field(default_factory=list)  # name, lon, lat, is_default
-    click: Point | None = None  # where the rider clicked on the map for this request
+    points: list[Point] = field(default_factory=list)  # where the rider clicked on the map, in order
     previous: RouteSpec | None = None  # the request being refined
     previous_candidates: list[list[tuple[float, float]]] = field(default_factory=list)  # their lines, lon/lat
     picks: dict[str, Point] = field(default_factory=dict)  # answers to earlier questions, by Question.about
@@ -73,17 +73,43 @@ def resolve(parsed: ParsedRequest, context: Context) -> Resolved:
         return Resolved(question=ask.question)
 
 
+def assign_points(
+    points: list[Point], start_named: bool, end_named: bool, loop: bool
+) -> tuple[Point | None, list[Point], Point | None]:
+    """Roles of the clicked points: (start, intermediate, finish).
+
+    The first point is the start unless the text names one; the last is the finish unless the text names
+    one or the route is a loop. A lone point with nothing named is only the start.
+    """
+    rest = list(points)
+    start = None if start_named or not rest else rest.pop(0)
+    finish = rest.pop() if rest and not end_named and not loop else None
+    return start, rest, finish
+
+
+def _is_named(name: str | None) -> bool:
+    return bool(name) and name.strip().casefold() != CLICKED_POINT
+
+
 def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
     warnings: list[str] = []
-    start = _start(parsed, context)
+    clicked_start, clicked_via, clicked_end = assign_points(
+        context.points, _is_named(parsed.start), _is_named(parsed.end), parsed.shape == "loop"
+    )
+    start = _start(parsed, context, _labelled(clicked_start, CLICKED_POINT))
     near = (start.point.lon, start.point.lat)
 
-    end = _find(parsed.end, context, near) if parsed.end else None
-    via = _find(parsed.via, context, near) if parsed.via else None
+    end = _find(parsed.end, context, near) if _is_named(parsed.end) else None
+    if end is None and clicked_end is not None:
+        end = _Found(_labelled(clicked_end, CLICKED_POINT))
+    if end is None and parsed.end:
+        end = _find(parsed.end, context, near)
+    via = [_find(name, context, near) for name in parsed.via]
+    via += [_Found(_labelled(point, f"точка {number}")) for number, point in enumerate(clicked_via, start=1)]
     shape = parsed.shape or ("p2p" if end else "loop")
     if shape == "loop" and end is not None:
         # "A loop to Revda": the named place is somewhere to pass, not somewhere to stop.
-        via, end = via or end, None
+        via, end = [*via, end], None
     if shape == "p2p" and end is None and "end" in context.picks:
         end = _Found(context.picks["end"])
     if shape == "p2p" and end is None:
@@ -91,7 +117,7 @@ def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
 
     length = _length(parsed)
 
-    for found in (start, end, via):
+    for found in (start, end, *via):
         if found is not None:
             warnings += _far_from_roads(found, context.snapper)
 
@@ -109,34 +135,41 @@ def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
         forest=defaults.forest if parsed.forest is None else parsed.forest,
         hills=parsed.hills or defaults.hills,
     )
-    if via is not None and parsed.via_water:
-        warnings.append(f"Маршрут пройдёт через {via.point.label}; отдельно к воде он не заезжает.")
+    if via and parsed.via_water:
+        names = ", ".join(found.point.label or "точка" for found in via)
+        warnings.append(f"Маршрут пройдёт через {names}; отдельно к воде он не заезжает.")
     spec = RouteSpec(
         start=start.point,
         end=end.point if end else None,
         shape=shape,
         length_km=length,
         prefs=prefs,
-        via=[via.point] if via else [],
-        via_category="water" if parsed.via_water and via is None else None,
+        via=[found.point for found in via],
+        via_category="water" if parsed.via_water and not via else None,
         avoid=avoid,
-        bearing_deg=_bearing(parsed, context, start.point) if shape == "loop" and via is None else None,
+        bearing_deg=_bearing(parsed, context, start.point) if shape == "loop" and not via else None,
     )
     return Resolved(spec=spec, warnings=warnings)
 
 
-def _start(parsed: ParsedRequest, context: Context) -> _Found:
+def _labelled(point: Point | None, label: str) -> Point | None:
+    """A clicked point keeps a label it already carries."""
+    return point.model_copy(update={"label": point.label or label}) if point is not None else None
+
+
+def _start(parsed: ParsedRequest, context: Context, clicked: Point | None) -> _Found:
     """Named in the text, else clicked on the map, else as before, else the default saved place."""
-    anchor = context.click or (context.previous.start if context.previous else None)
+    first = context.points[0] if context.points else None
+    anchor = first or (context.previous.start if context.previous else None)
     default = next((place for place in context.saved_places if place["is_default"]), None)
     if anchor is None and default is not None:
         anchor = Point(lon=default["lon"], lat=default["lat"])
-    if parsed.start and parsed.start.strip().casefold() == CLICKED_POINT and context.click is None:
+    if parsed.start and not _is_named(parsed.start) and clicked is None:
         raise _Ask(Question(text="Кликните по карте, откуда стартуем.", about="start"))
-    if parsed.start:
+    if _is_named(parsed.start):
         return _find(parsed.start, context, (anchor.lon, anchor.lat) if anchor else None)
-    if context.click is not None:
-        return _Found(context.click.model_copy(update={"label": context.click.label or CLICKED_POINT}))
+    if clicked is not None:
+        return _Found(clicked)
     if "start" in context.picks:
         return _Found(context.picks["start"])
     if context.previous is not None:
@@ -151,8 +184,8 @@ def _find(name: str, context: Context, near: tuple[float, float] | None) -> _Fou
     wanted = name.strip().casefold()
     if name in context.picks:
         return _Found(context.picks[name])
-    if wanted == CLICKED_POINT and context.click is not None:
-        return _Found(context.click.model_copy(update={"label": CLICKED_POINT}))
+    if wanted == CLICKED_POINT and context.points:
+        return _Found(_labelled(context.points[0], CLICKED_POINT))
     for place in context.saved_places:
         if place["name"].casefold() == wanted:
             return _Found(Point(lon=place["lon"], lat=place["lat"], label=place["name"]))

@@ -34,6 +34,8 @@ def _matches(name: str, got: object, wanted: object) -> bool:
         return isinstance(got, (int, float)) and not isinstance(got, bool) and wanted[1] <= got <= wanted[2]
     if name == "avoid":
         return len(got) == len(wanted) and all(any(same_name(g, w) for g in got) for w in wanted)
+    if name == "via":  # the order is the route
+        return len(got) == len(wanted) and all(same_name(g, w) for g, w in zip(got, wanted))
     if name in _PLACE_FIELDS and isinstance(wanted, str):
         return isinstance(got, str) and same_name(got, wanted)
     return got == wanted
