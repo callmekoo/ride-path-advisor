@@ -184,6 +184,7 @@ export function MapView(props: MapViewProps) {
       const canvas = map.getCanvas();
       let marker: Marker | null = null;
       let timer: number | undefined;
+      let farthest = 0; // how far the pointer has been from where it pressed
       const place = (clientX: number, clientY: number) => {
         const box = canvas.getBoundingClientRect();
         const at = map.unproject([clientX - box.left, clientY - box.top]);
@@ -218,6 +219,7 @@ export function MapView(props: MapViewProps) {
         const point = e.type.startsWith("touch") ? (e as TouchEvent).changedTouches[0] : (e as MouseEvent);
         if (!point) return end(null);
         const moved = Math.hypot(point.clientX - from.x, point.clientY - from.y);
+        farthest = Math.max(farthest, moved);
         if (e.type === "mousemove" || e.type === "touchmove") {
           if (e.type === "mousemove" && (e as MouseEvent).buttons === 0) return end(null); // let go outside the window
           if (!marker && moved >= GRAB_PX) {
@@ -229,7 +231,8 @@ export function MapView(props: MapViewProps) {
             place(point.clientX, point.clientY);
           }
         } else {
-          end(marker ? place(point.clientX, point.clientY) : null);
+          // A long press held still and lifted is not a drop; the mouse needs no such rule (it moves to grab).
+          end(marker && (!touch || farthest >= GRAB_PX) ? place(point.clientX, point.clientY) : null);
         }
       };
       release = () => end(null);

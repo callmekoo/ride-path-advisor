@@ -8,6 +8,7 @@ export interface Entry {
   role: "rider" | "service" | "error";
   text: string;
   notes: string[]; // warnings that came with a service answer
+  found?: boolean; // a plain "found N variants" line
 }
 
 export interface ChatProps {

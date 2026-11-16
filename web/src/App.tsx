@@ -36,9 +36,11 @@ import {
   answerWithOption,
   answerWithPoint,
   answerWithText,
+  appended,
   closedLoop,
   edited,
   freshTurn,
+  lineDragRefusal,
   movedPoint,
   pinnedEnds,
   pointRoles,
@@ -114,8 +116,9 @@ export function App() {
   pointsNow.current = points;
   const inFlight = useRef(false); // one request at a time: the later answer must not overwrite the earlier
 
-  const say = useCallback((role: Entry["role"], text: string, notes: string[] = []) => {
-    setEntries((log) => [...log, { id: ++entryId.current, role, text, notes }]);
+  const say = useCallback((role: Entry["role"], text: string, notes: string[] = [], found?: { fromEdit: boolean }) => {
+    const entry: Entry = { id: ++entryId.current, role, text, notes, found: !!found };
+    setEntries((log) => appended(log, entry, found?.fromEdit ?? false));
   }, []);
 
   useEffect(() => {
@@ -197,10 +200,13 @@ export function App() {
         setHoverShare(null);
         const lines = routed.candidates.map((candidate) => candidate.geometry.coordinates);
         if (lines.length > 0) setFrame(bounds(lines));
+        const notes = [...parsed.warnings, ...routed.warnings];
         say(
           "service",
           lines.length > 0 ? found(lines.length) : (routed.message ?? "Маршрутов не нашлось."),
-          [...parsed.warnings, ...routed.warnings],
+          notes,
+          // Only a plain count after a point edit (no words) takes the place of the previous one.
+          lines.length > 0 && notes.length === 0 ? { fromEdit: body.text === "" } : undefined,
         );
       } catch (error) {
         setPoints(before); // the shown result still belongs to the points it was built from
@@ -267,6 +273,8 @@ export function App() {
   const onDragLine = (grabbed: LonLat, dropped: LonLat) => {
     const line = chosen?.body.geometry.coordinates;
     if (busy || pending || !turn || !result || showingSaved || !line) return;
+    const refusal = lineDragRefusal(turn.understood);
+    if (refusal) return say("error", refusal);
     const now = pinnedEnds(base(), result.spec);
     const index = insertIndex(line, now.points.map((point): LonLat => [point.lon, point.lat]), grabbed);
     changePoints(withPointAt(now, index, { lon: dropped[0], lat: dropped[1] }));

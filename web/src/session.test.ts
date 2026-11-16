@@ -7,9 +7,11 @@ import {
   answerWithOption,
   answerWithPoint,
   answerWithText,
+  appended,
   closedLoop,
   edited,
   freshTurn,
+  lineDragRefusal,
   movedPoint,
   pinnedEnds,
   pointRoles,
@@ -208,5 +210,30 @@ describe("pinning the ends before inserting a point", () => {
     expect(withPointAt(turn, 1, THERE).points).toEqual([HERE, THERE, FAR]);
     expect(withPointAt(turn, 2, THERE).points).toEqual([HERE, FAR, THERE]);
     expect(turn.points).toEqual([HERE, FAR]);
+  });
+});
+
+describe("lineDragRefusal", () => {
+  it("refuses a line drag when places are named in words", () => {
+    expect(lineDragRefusal(loop)).toContain("перетаскиванием линии не правится");
+  });
+
+  it("allows it otherwise", () => {
+    expect(lineDragRefusal({ ...NOTHING_SAID, shape: "loop" })).toBeNull();
+  });
+});
+
+describe("appended", () => {
+  const line = (id: number, found = false) => ({ id, found });
+
+  it("replaces a found line by the next one from a point edit", () => {
+    expect(appended([line(1), line(2, true)], line(3, true), true)).toEqual([line(1), line(3, true)]);
+  });
+
+  it("keeps the lines of typed requests, other answers and a different previous line", () => {
+    expect(appended([line(1, true)], line(2, true), false)).toEqual([line(1, true), line(2, true)]);
+    expect(appended([line(1, true)], line(2), true)).toEqual([line(1, true), line(2)]);
+    expect(appended([line(1)], line(2, true), true)).toEqual([line(1), line(2, true)]);
+    expect(appended([], line(1, true), true)).toEqual([line(1, true)]);
   });
 });

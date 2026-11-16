@@ -160,3 +160,21 @@ export function pointRoles(count: number, understood: ParsedRequest | null): Rol
 export function rebuilds(hasTurn: boolean, pointCount: number): boolean {
   return hasTurn || pointCount >= 2;
 }
+
+/** Why a drag of the route's line is refused, or null when it is allowed. */
+export function lineDragRefusal(understood: ParsedRequest): string | null {
+  // Places named in words are always ridden before the clicked points, so a point dragged out of the
+  // stretch before one of them would be ridden after it: the route would double back.
+  return understood.via.length > 0
+    ? "Маршрут с местами, названными словами, перетаскиванием линии не правится: уберите чип «через: …» или поставьте точку кликом."
+    : null;
+}
+
+/**
+ * The log with `entry` added. A "found N" line from a point edit replaces the one before it,
+ * so that dragging a marker around does not fill the dialogue with the same sentence.
+ */
+export function appended<T extends { found?: boolean }>(log: T[], entry: T, fromEdit: boolean): T[] {
+  const last = log[log.length - 1];
+  return fromEdit && entry.found && last?.found ? [...log.slice(0, -1), entry] : [...log, entry];
+}
