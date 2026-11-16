@@ -1,6 +1,6 @@
 // The conversation with the server, as pure functions: each returns the body of the next POST /api/parse.
 
-import type { ParseBody, ParsedRequest, Point, Question } from "./api";
+import type { ParseBody, ParsedRequest, Point, Question, RouteSpec } from "./api";
 import { CLICKED_POINT } from "./chips";
 
 export const NOTHING_SAID: ParsedRequest = {
@@ -104,6 +104,28 @@ export function withoutPoint(turn: Turn, index: number): Turn {
 /** The turn with the point at `index` moved. */
 export function movedPoint(turn: Turn, index: number, point: Point): Turn {
   return { ...turn, points: turn.points.map((old, at) => (at === index ? point : old)) };
+}
+
+/** The turn with a point inserted so that it ends up at `index` in the list. */
+export function withPointAt(turn: Turn, index: number, point: Point): Turn {
+  return { ...turn, points: [...turn.points.slice(0, index), point, ...turn.points.slice(index)] };
+}
+
+/**
+ * The turn with the ends of the shown route made explicit, so that adding a point cannot change who is the start
+ * or the finish: the server gives those roles to the first and last clicked points unless words name them.
+ */
+export function pinnedEnds(turn: Turn, spec: RouteSpec): Turn {
+  let { points, understood } = turn;
+  if (points.length === 0 && !names(understood.start)) {
+    points = [{ lon: spec.start.lon, lat: spec.start.lat, label: spec.start.label }];
+  }
+  if (spec.shape === "loop") {
+    understood = { ...understood, shape: "loop" };
+  } else if (spec.end && !names(understood.end) && !pointRoles(points.length, understood).includes("finish")) {
+    points = [...points, { lon: spec.end.lon, lat: spec.end.lat, label: spec.end.label }];
+  }
+  return { ...turn, points, understood };
 }
 
 /** The route closed into a loop, or opened again (the server then infers start → finish). */

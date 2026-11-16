@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ParsedRequest, Point } from "./api";
+import type { ParsedRequest, Point, RouteSpec } from "./api";
 import {
   NOTHING_SAID,
   type Pending,
@@ -11,11 +11,13 @@ import {
   edited,
   freshTurn,
   movedPoint,
+  pinnedEnds,
   pointRoles,
   rebuilds,
   startingAt,
   utterance,
   withPoint,
+  withPointAt,
   withoutPoint,
 } from "./session";
 
@@ -164,5 +166,47 @@ describe("pointRoles", () => {
 
   it("treats a missing turn as nothing named", () => {
     expect(pointRoles(3, null)).toEqual(["start", 1, "finish"]);
+  });
+});
+
+describe("pinning the ends before inserting a point", () => {
+  const spec = (shape: "loop" | "p2p", end: Point | null): RouteSpec =>
+    ({ start: { ...HERE, label: "Дом" }, end, shape }) as RouteSpec;
+  const FINISH: Point = { ...FAR, label: "Парк" };
+
+  it("puts the route's start first when nothing clicked or said names it", () => {
+    const turn = pinnedEnds(freshTurn([]), spec("p2p", FINISH));
+    expect(turn.points).toEqual([{ ...HERE, label: "Дом" }, FINISH]);
+  });
+
+  it("leaves a start named in words alone, and a clicked list keeps its start", () => {
+    const named = { ...freshTurn([]), understood: { ...NOTHING_SAID, start: "Дом", end: "Парк" } };
+    expect(pinnedEnds(named, spec("p2p", FINISH))).toEqual(named);
+    const clicked = freshTurn([HERE, THERE]);
+    expect(pinnedEnds(clicked, spec("p2p", FINISH)).points).toEqual([HERE, THERE]);
+  });
+
+  it("pins the loop shape", () => {
+    const turn = pinnedEnds(freshTurn([HERE, THERE]), spec("loop", null));
+    expect(turn.understood.shape).toBe("loop");
+    expect(turn.points).toEqual([HERE, THERE]);
+    expect(pinnedEnds(freshTurn([]), spec("loop", null)).points).toEqual([{ ...HERE, label: "Дом" }]);
+  });
+
+  it("appends the finish when no clicked point or word is it", () => {
+    const named = { ...freshTurn([THERE]), understood: { ...NOTHING_SAID, start: "Дом" } };
+    // the only clicked point would be the finish: nothing to add
+    expect(pinnedEnds(named, spec("p2p", FINISH)).points).toEqual([THERE]);
+    const turn = pinnedEnds(freshTurn([HERE]), spec("p2p", FINISH));
+    expect(turn.points).toEqual([HERE, FINISH]);
+    const said = { ...freshTurn([HERE]), understood: { ...NOTHING_SAID, end: "Парк" } };
+    expect(pinnedEnds(said, spec("p2p", FINISH)).points).toEqual([HERE]);
+  });
+
+  it("inserts a point at an index", () => {
+    const turn = freshTurn([HERE, FAR]);
+    expect(withPointAt(turn, 1, THERE).points).toEqual([HERE, THERE, FAR]);
+    expect(withPointAt(turn, 2, THERE).points).toEqual([HERE, FAR, THERE]);
+    expect(turn.points).toEqual([HERE, FAR]);
   });
 });

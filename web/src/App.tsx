@@ -26,7 +26,7 @@ import { PlacesPanel } from "./components/PlacesPanel";
 import { RequestEditor } from "./components/RequestEditor";
 import { SavedRoutesPanel } from "./components/SavedRoutesPanel";
 import { TracksPanel } from "./components/TracksPanel";
-import { along, bounds, pointAt, walkLines } from "./geo";
+import { along, bounds, insertIndex, pointAt, walkLines } from "./geo";
 import { routeColour } from "./palette";
 import {
   MAX_POINTS,
@@ -40,11 +40,13 @@ import {
   edited,
   freshTurn,
   movedPoint,
+  pinnedEnds,
   pointRoles,
   rebuilds,
   startingAt,
   utterance,
   withPoint,
+  withPointAt,
   withoutPoint,
 } from "./session";
 
@@ -259,6 +261,15 @@ export function App() {
 
   const onMovePoint = (index: number, point: Point) => {
     if (!busy) changePoints(movedPoint(base(), index, point));
+  };
+
+  /** The selected route's line was dragged: a new intermediate point where it was dropped, between its neighbours. */
+  const onDragLine = (grabbed: LonLat, dropped: LonLat) => {
+    const line = chosen?.body.geometry.coordinates;
+    if (busy || pending || !turn || !result || showingSaved || !line) return;
+    const now = pinnedEnds(base(), result.spec);
+    const index = insertIndex(line, now.points.map((point): LonLat => [point.lon, point.lat]), grabbed);
+    changePoints(withPointAt(now, index, { lon: dropped[0], lat: dropped[1] }));
   };
 
   const onChange = (request: ParsedRequest) => {
@@ -503,6 +514,7 @@ export function App() {
         locked={busy}
         onMovePoint={onMovePoint}
         onPointClick={onPointClick}
+        onDragLine={onDragLine}
         place={tab === "places" ? place : null}
         routes={lines}
         walk={walk}

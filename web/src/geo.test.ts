@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { LonLat } from "./api";
-import { along, bounds, distanceM, pointAt, walkLines } from "./geo";
+import { along, bounds, distanceM, insertIndex, pointAt, walkLines } from "./geo";
 
 // One degree of latitude, then about as far east along the 57th parallel.
 const line: LonLat[] = [
@@ -43,5 +43,36 @@ describe("geo", () => {
     expect(walkLines(route, [[0, 1], [3, 4]])).toEqual([[[0, 0], [1, 0]], [[3, 0], [4, 0]]]);
     expect(walkLines(route, [])).toEqual([]);
     expect(walkLines(route, [[3, 7], [-1, 2], [1, 2]])).toEqual([[[1, 0], [2, 0]]]);
+  });
+
+  describe("insertIndex", () => {
+    // A straight line east, one coordinate per 0.1 degree.
+    const way: LonLat[] = Array.from({ length: 11 }, (_, i) => [60 + i / 10, 56]);
+
+    it("goes between the start and the first intermediate point", () => {
+      expect(insertIndex(way, [[60, 56], [60.5, 56], [61, 56]], [60.2, 56.001])).toBe(1);
+    });
+
+    it("goes between two intermediate points", () => {
+      expect(insertIndex(way, [[60, 56], [60.3, 56], [60.7, 56], [61, 56]], [60.5, 56])).toBe(2);
+    });
+
+    it("goes before the finish", () => {
+      expect(insertIndex(way, [[60, 56], [60.3, 56], [61, 56]], [60.8, 56])).toBe(2);
+    });
+
+    it("on a loop, a grab on the way home lands after the last intermediate point", () => {
+      const there = way.slice(0, 6);
+      const loop: LonLat[] = [...there, ...there.slice(0, -1).reverse()];
+      const points: LonLat[] = [[60, 56], [60.5, 56]]; // the start sits at both ends of the line
+      expect(insertIndex(loop, points, [60.2, 56])).toBe(1);
+      expect(insertIndex(loop, points, [60.1, 56.0002])).toBe(1);
+      expect(insertIndex(loop, [[60, 56], [60.3, 56]], [60.4, 56])).toBe(2);
+    });
+
+    it("with no intermediate points, goes between the ends", () => {
+      expect(insertIndex(way, [[60, 56], [61, 56]], [60.5, 56])).toBe(1);
+      expect(insertIndex(way, [], [60.5, 56])).toBe(0);
+    });
   });
 });

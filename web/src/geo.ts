@@ -56,3 +56,26 @@ export function walkLines(coordinates: LonLat[], spans: [number, number][]): Lon
     first >= 0 && last >= first && last < coordinates.length ? [coordinates.slice(first, last + 1)] : [],
   );
 }
+
+function nearestIndex(line: LonLat[], at: LonLat): number {
+  const scale = Math.cos(at[1] * RAD); // degrees of longitude shrink away from the equator
+  let best = 0;
+  let bestSquare = Infinity;
+  line.forEach(([lon, lat], index) => {
+    const square = ((lon - at[0]) * scale) ** 2 + (lat - at[1]) ** 2;
+    if (square < bestSquare) [best, bestSquare] = [index, square]; // strict: a tie keeps the earlier coordinate
+  });
+  return best;
+}
+
+/**
+ * Where in the list of clicked `points` (those on the route, in riding order) a point grabbed at `grabbed` on the
+ * `line` belongs: before the first point that lies further along the line. A loop's start sits at both ends of the
+ * line and takes the first coordinate, so the way home lands after the last intermediate point.
+ */
+export function insertIndex(line: LonLat[], points: LonLat[], grabbed: LonLat): number {
+  if (line.length === 0) return points.length;
+  const at = nearestIndex(line, grabbed);
+  const first = points.findIndex((point) => nearestIndex(line, point) > at);
+  return first < 0 ? points.length : first;
+}

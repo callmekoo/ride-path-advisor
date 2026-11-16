@@ -1,6 +1,6 @@
 import { Map as MapLibre, Marker, NavigationControl, ScaleControl, setWorkerUrl } from "maplibre-gl";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
-import type { ExpressionSpecification, FilterSpecification, GeoJSONSource, MapMouseEvent } from "maplibre-gl";
+import type { ExpressionSpecification, FilterSpecification, GeoJSONSource, MapMouseEvent, MapTouchEvent } from "maplibre-gl";
 import type { FeatureCollection } from "geojson";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -24,6 +24,8 @@ export interface MapViewProps {
   locked: boolean;
   onMovePoint(index: number, point: Point): void;
   onPointClick(index: number): void;
+  /** The selected route's line was grabbed at one place and dropped at another: a new point goes there. */
+  onDragLine(grabbed: LonLat, dropped: LonLat): void;
   /** Where a new saved place would go (the «Места» tab): a plain marker, no part of the route. */
   place: Point | null;
   /** Lines of the shown routes; colours come from `routeColour(index)`. */
@@ -54,6 +56,8 @@ const STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const ATTRIBUTION = "Высоты: Copernicus DEM GLO-30 · Лес: ESA WorldCover";
 const HIT_PX = 6;
 const DRAG_CLICK_MS = 300;
+const GRAB_PX = 5; // a press that moves less than this is a click
+const LONG_PRESS_MS = 350; // a touch grabs the line only after this long, so that scrolling the map still works
 const ROUTE_LAYERS = ["map-routes-other", "map-routes-casing", "map-routes-selected"];
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
 
@@ -73,6 +77,7 @@ export function MapView(props: MapViewProps) {
   const pointMarkers = useRef<Marker[]>([]);
   const placeMarker = useRef<Marker | null>(null);
   const draggedAt = useRef(-Infinity); // a drag ends with a click on the marker, which is not one
+  const lineDraggedAt = useRef(-Infinity); // likewise a line drag ends with a click on the map
 
   // Handlers are read through this ref so that map listeners never call stale callbacks.
   const latest = useRef(props);
@@ -133,6 +138,7 @@ export function MapView(props: MapViewProps) {
     });
 
     map.on("click", (event: MapMouseEvent) => {
+      if (performance.now() - lineDraggedAt.current < DRAG_CLICK_MS) return;
       const { x, y } = event.point;
       const hits = map.queryRenderedFeatures(
         [
@@ -154,8 +160,88 @@ export function MapView(props: MapViewProps) {
       map.on("mouseleave", id, () => (map.getCanvas().style.cursor = ""));
     }
 
+    // Grabbing the selected route's line: a mouse press that moves, or a touch held still for a moment. The new
+    // point is a temporary marker under the pointer; nothing is rebuilt until the line is let go.
+    let release: (() => void) | null = null; // ends a gesture in progress, whatever state it is in
+    const onLine = (event: MapMouseEvent | MapTouchEvent) => {
+      const { x, y } = event.point;
+      return map.queryRenderedFeatures(
+        [
+          [x - HIT_PX, y - HIT_PX],
+          [x + HIT_PX, y + HIT_PX],
+        ],
+        { layers: map.getLayer("map-routes-selected") ? ["map-routes-selected"] : [] },
+      ).length > 0;
+    };
+    const grab = (event: MapMouseEvent | MapTouchEvent, touch: boolean) => {
+      const original = event.originalEvent;
+      if (release || latest.current.locked || original.target !== map.getCanvas() || !onLine(event)) return;
+      if (touch ? (original as TouchEvent).touches.length !== 1 : (original as MouseEvent).button !== 0) return;
+      const grabbed: LonLat = [event.lngLat.lng, event.lngLat.lat];
+      const pressed = touch ? (original as TouchEvent).touches[0]! : (original as MouseEvent);
+      const from = { x: pressed.clientX, y: pressed.clientY };
+      const canvas = map.getCanvas();
+      let marker: Marker | null = null;
+      let timer: number | undefined;
+      const place = (clientX: number, clientY: number) => {
+        const box = canvas.getBoundingClientRect();
+        const at = map.unproject([clientX - box.left, clientY - box.top]);
+        marker?.setLngLat(at);
+        return [at.lng, at.lat] as LonLat;
+      };
+      const start = () => {
+        map.dragPan.disable();
+        const element = document.createElement("div");
+        element.className = "map-point map-point-via";
+        element.textContent = "+";
+        marker = new Marker({ element }).setLngLat(grabbed).addTo(map);
+      };
+      const end = (dropped: LonLat | null) => {
+        window.clearTimeout(timer);
+        for (const name of ["mousemove", "mouseup", "touchmove", "touchend", "touchcancel", "blur"]) {
+          window.removeEventListener(name, handle);
+        }
+        const dragged = marker !== null;
+        marker?.remove();
+        marker = null;
+        if (dragged) {
+          map.dragPan.enable();
+          lineDraggedAt.current = performance.now();
+        }
+        release = null;
+        if (dragged && dropped) latest.current.onDragLine(grabbed, dropped);
+      };
+      const handle = (e: Event) => {
+        if (e.type === "blur" || e.type === "touchcancel") return end(null);
+        const point = e.type.startsWith("touch") ? (e as TouchEvent).changedTouches[0] : (e as MouseEvent);
+        if (!point) return end(null);
+        const moved = Math.hypot(point.clientX - from.x, point.clientY - from.y);
+        if (e.type === "mousemove" || e.type === "touchmove") {
+          if (e.type === "mousemove" && (e as MouseEvent).buttons === 0) return end(null); // let go outside the window
+          if (!marker && moved >= GRAB_PX) {
+            if (touch) return end(null); // the finger is scrolling the map
+            start();
+          }
+          if (marker) {
+            if (e.cancelable) e.preventDefault();
+            place(point.clientX, point.clientY);
+          }
+        } else {
+          end(marker ? place(point.clientX, point.clientY) : null);
+        }
+      };
+      release = () => end(null);
+      for (const name of ["mousemove", "mouseup", "touchmove", "touchend", "touchcancel", "blur"]) {
+        window.addEventListener(name, handle, { passive: false });
+      }
+      if (touch) timer = window.setTimeout(start, LONG_PRESS_MS);
+    };
+    map.on("mousedown", (event) => grab(event, false));
+    map.on("touchstart", (event) => grab(event, true));
+
     mapRef.current = map;
     return () => {
+      release?.();
       startMarker.current = null;
       finishMarker.current = null;
       optionMarkers.current = [];
