@@ -1,6 +1,16 @@
-import pytest
+import math
+import sqlite3
 
-from rpa.osm.gazetteer import Gazetteer, build_gazetteer, describe, read_places
+import pytest
+import shapely
+
+from rpa.osm.gazetteer import (
+    MAX_OUTLINE_VERTICES,
+    Gazetteer,
+    build_gazetteer,
+    describe,
+    read_places,
+)
 
 OPL = """\
 n1 x60.60 y56.84 Tplace=city,name=Екатеринбург
@@ -163,3 +173,73 @@ def test_places_are_described_for_people(gazetteer):
     assert describe(gazetteer.search("Ревда")[0].place) == "Ревда (город)"
     assert describe(gazetteer.search("Круглое")[0].place) == "озеро Круглое"
     assert describe(gazetteer.search("Дидинский тоннель")[0].place) == "Дидинский Тоннель (станция)"
+
+
+# --- outlines ------------------------------------------------------------------
+
+
+def test_a_lake_has_an_outline_of_its_nodes(gazetteer):
+    outline = gazetteer.search("озеро Круглое")[0].place.outline
+    assert {(round(lon, 2), round(lat, 2)) for lon, lat in outline} == {
+        (60.80, 56.90),
+        (60.82, 56.90),
+        (60.82, 56.91),
+        (60.80, 56.91),
+    }
+
+
+def test_points_and_rivers_have_no_outline(gazetteer):
+    assert gazetteer.search("Волчиха")[0].place.outline == ()
+    assert gazetteer.search("станция Круглое")[0].place.outline == ()
+    rivers = gazetteer.search("река Чусовая")
+    assert rivers and all(hit.place.outline == () for hit in rivers)
+
+
+def test_a_town_node_keeps_the_outline_of_its_area(gazetteer):
+    town = next(hit.place for hit in gazetteer.search("Ревда", near=(59.9, 56.8)) if hit.place.kind == "town")
+    assert (town.lon, town.lat) == pytest.approx((59.93, 56.80))  # the node, not the area's inner point
+    assert len(town.outline) == 4
+    assert {round(lon, 2) for lon, _ in town.outline} == {59.95, 60.05}
+
+
+def wavy_lake_opl(vertices: int) -> str:
+    lines, ids = [], []
+    for i in range(vertices):
+        angle = 2 * math.pi * i / vertices
+        radius = 0.05 * (1 + 0.03 * math.sin(40 * angle))
+        lines.append(f"n{i + 1} x{60.0 + radius * math.cos(angle) * 1.8:.6f} y{56.0 + radius * math.sin(angle):.6f}")
+        ids.append(f"n{i + 1}")
+    ids.append("n1")
+    lines.append(f"w1 Tnatural=water,water=lake,name=Извилистое Nn{',n'.join(i[1:] for i in ids)}")
+    return "\n".join(lines) + "\n"
+
+
+def test_a_detailed_outline_is_simplified_to_a_simple_polygon(tmp_path):
+    (tmp_path / "map.opl").write_text(wavy_lake_opl(1000))
+    (place,) = read_places(tmp_path / "map.opl")
+    assert 3 <= len(place.outline) <= MAX_OUTLINE_VERTICES
+    polygon = shapely.Polygon(place.outline)
+    assert polygon.is_valid
+    assert polygon.contains(shapely.Point(60.0, 56.0))
+
+
+def test_a_gazetteer_without_outlines_still_opens(tmp_path):
+    path = tmp_path / "old.sqlite"
+    connection = sqlite3.connect(path)
+    with connection:
+        connection.executescript(
+            """
+            CREATE TABLE places (
+                id INTEGER PRIMARY KEY, name TEXT, kind TEXT, lon REAL, lat REAL, radius_m REAL, alt_names TEXT
+            );
+            CREATE TABLE keys (key TEXT, plain TEXT, place_id INTEGER);
+            CREATE VIRTUAL TABLE words USING fts5(text, tokenize = "unicode61 remove_diacritics 0");
+            INSERT INTO places VALUES (1, 'Шарташ', 'lake', 60.7, 56.9, 900, '');
+            INSERT INTO keys VALUES ('шарташ', 'шарташ', 1);
+            INSERT INTO words (rowid, text) VALUES (1, 'шарташ');
+            """
+        )
+    connection.close()
+    for query in ("Шарташ", "Шарт"):  # whole-name and prefix searches use different queries
+        (hit,) = Gazetteer(path).search(query)
+        assert hit.place.name == "Шарташ" and hit.place.outline == ()

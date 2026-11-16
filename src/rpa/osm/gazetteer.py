@@ -5,12 +5,14 @@ summit, the middle of a lake), so the gazetteer is read from the OSM file
 itself; whoever uses a hit snaps it to the nearest road.
 """
 
+import json
 import math
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+import numpy as np
 import osmium
 import shapely
 
@@ -104,6 +106,10 @@ _GENERIC = {_stem(word): kinds for word, kinds in _GENERIC_WORDS.items()}
 _MERGE_DISTANCE_M = 4000.0
 _M_PER_DEG = 111_195.0
 
+MAX_OUTLINE_VERTICES = 100
+_MIN_OUTLINE_TOLERANCE_M = 30.0
+_OUTLINE_TOLERANCE_SHARE = 0.02  # of the area's radius
+
 
 @dataclass(frozen=True)
 class Place:
@@ -113,6 +119,7 @@ class Place:
     lat: float
     radius_m: float = 0.0  # rough size of an area; 0 for a point
     alt_names: tuple[str, ...] = ()
+    outline: tuple[tuple[float, float], ...] = ()  # (lon, lat) border of an area, simplified; empty for a point
 
 
 @dataclass(frozen=True)
@@ -196,6 +203,25 @@ def _alt_names(tags: osmium.osm.TagList) -> tuple[str, ...]:
     return tuple(name for name in found if name)
 
 
+def _outline(shape: shapely.Geometry, lat: float, radius_m: float) -> tuple[tuple[float, float], ...]:
+    """The outer border of the largest part of an area, simplified to at most MAX_OUTLINE_VERTICES vertices.
+
+    Simplified in metres (degrees of longitude are shorter than those of latitude); islands are dropped.
+    """
+    parts = [part for part in getattr(shape, "geoms", [shape]) if isinstance(part, shapely.Polygon)]
+    if not parts:
+        return ()
+    scale = np.array([_M_PER_DEG * math.cos(math.radians(lat)), _M_PER_DEG])
+    ring = shapely.Polygon(np.asarray(max(parts, key=lambda part: part.area).exterior.coords) * scale)
+    tolerance = max(_MIN_OUTLINE_TOLERANCE_M, _OUTLINE_TOLERANCE_SHARE * radius_m)
+    simple = ring.simplify(tolerance, preserve_topology=True)
+    while len(simple.exterior.coords) - 1 > MAX_OUTLINE_VERTICES:
+        tolerance *= 2
+        simple = ring.simplify(tolerance, preserve_topology=True)
+    vertices = np.asarray(simple.exterior.coords)[:-1] / scale
+    return tuple((round(float(x), 5), round(float(y), 5)) for x, y in vertices)
+
+
 def read_places(path: Path) -> list[Place]:
     """Named places of an OSM file, with namesakes of one kind merged when they are close together."""
     factory = osmium.geom.WKBFactory()
@@ -213,6 +239,7 @@ def read_places(path: Path) -> list[Place]:
         if not name:
             continue
         radius = 0.0
+        outline: tuple[tuple[float, float], ...] = ()
         try:
             if obj.is_node():
                 kind = _node_kind(tags)
@@ -229,6 +256,7 @@ def read_places(path: Path) -> list[Place]:
                 if kind != "river":  # a river mapped as an area is still a line to ride along, not a blob
                     area_m2 = shape.area * _M_PER_DEG**2 * math.cos(math.radians(lat))
                     radius = math.sqrt(area_m2 / math.pi)
+                    outline = _outline(shape, lat, radius)
             elif obj.is_way() and tags.get("waterway") == "river":
                 kind = "river"
                 middle = obj.nodes[len(obj.nodes) // 2].location
@@ -237,7 +265,7 @@ def read_places(path: Path) -> list[Place]:
                 continue
         except (RuntimeError, osmium.InvalidLocationError):
             continue  # broken geometry, or nodes missing at the edge of the extract
-        found.setdefault((_name(name).key, kind), []).append(Place(name, kind, lon, lat, radius, _alt_names(tags)))
+        found.setdefault((_name(name).key, kind), []).append(Place(name, kind, lon, lat, radius, _alt_names(tags), outline))
     return [place for namesakes in found.values() for place in _merge_close(namesakes)]
 
 
@@ -245,7 +273,7 @@ def _merge_close(namesakes: list[Place]) -> list[Place]:
     """One place per cluster of namesakes: a town's node and its outline, the pieces of a river.
 
     Points win over areas (a place node marks the centre, an outline's inner
-    point is arbitrary) and take over the area's size; among areas the largest
+    point is arbitrary) and take over the area's size and outline; among areas the largest
     wins: the lake rather than a bay mapped inside it.
     """
     kept: list[Place] = []
@@ -254,7 +282,7 @@ def _merge_close(namesakes: list[Place]) -> list[Place]:
             reach = max(_MERGE_DISTANCE_M, 2 * place.radius_m, 2 * other.radius_m)
             if _distance_m(place.lon, place.lat, other.lon, other.lat) <= reach:
                 if place.radius_m > other.radius_m and other.radius_m == 0:
-                    kept[i] = Place(other.name, other.kind, other.lon, other.lat, place.radius_m, other.alt_names)
+                    kept[i] = replace(other, radius_m=place.radius_m, outline=place.outline)
                 break
         else:
             kept.append(place)
@@ -265,7 +293,7 @@ def _merge_close(namesakes: list[Place]) -> list[Place]:
 
 _SCHEMA = """
 CREATE TABLE places (
-    id INTEGER PRIMARY KEY, name TEXT, kind TEXT, lon REAL, lat REAL, radius_m REAL, alt_names TEXT
+    id INTEGER PRIMARY KEY, name TEXT, kind TEXT, lon REAL, lat REAL, radius_m REAL, alt_names TEXT, outline TEXT
 );
 CREATE TABLE keys (key TEXT, plain TEXT, place_id INTEGER);
 CREATE INDEX keys_by_key ON keys(key);
@@ -283,8 +311,17 @@ def build_gazetteer(places: list[Place], path: Path) -> None:
         connection.executescript(_SCHEMA)
         for place_id, place in enumerate(places, start=1):
             connection.execute(
-                "INSERT INTO places VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (place_id, place.name, place.kind, place.lon, place.lat, place.radius_m, ";".join(place.alt_names)),
+                "INSERT INTO places VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    place_id,
+                    place.name,
+                    place.kind,
+                    place.lon,
+                    place.lat,
+                    place.radius_m,
+                    ";".join(place.alt_names),
+                    json.dumps(place.outline) if place.outline else None,
+                ),
             )
             all_names = (place.name, *place.alt_names)
             for name in {(_name(text).key, _name(text).plain) for text in all_names}:
@@ -316,7 +353,11 @@ class Gazetteer:
             return []
         connection = sqlite3.connect(self.path)
         try:
-            columns = "p.id, p.name, p.kind, p.lon, p.lat, p.radius_m, p.alt_names"
+            # A gazetteer built before outlines existed has no such column: its places simply have none.
+            has_outline = any(row[1] == "outline" for row in connection.execute("PRAGMA table_info(places)"))
+            columns = "p.id, p.name, p.kind, p.lon, p.lat, p.radius_m, p.alt_names, " + (
+                "p.outline" if has_outline else "NULL"
+            )
             matching = connection.execute(
                 f"SELECT {columns}, MAX(k.plain = ?) FROM keys k JOIN places p ON p.id = k.place_id "
                 "WHERE k.key = ? GROUP BY p.id",
@@ -335,9 +376,9 @@ class Gazetteer:
             connection.close()
 
         # Names equal up to word endings are exact, unless some are equal outright: then only those are.
-        letter_for_letter = any(row[7] for row in matching)
-        exact_ids = {row[0] for row in matching if row[7] or not letter_for_letter}
-        rows = [(row[:7], row[0] in exact_ids) for row in matching]
+        letter_for_letter = any(row[8] for row in matching)
+        exact_ids = {row[0] for row in matching if row[8] or not letter_for_letter}
+        rows = [(row[:8], row[0] in exact_ids) for row in matching]
         rows += [(row, False) for row in loose if row[0] not in {row[0] for row in matching}]
         hits = [self._hit(row, exact, name.hinted, near) for row, exact in rows]
         hits.sort(key=lambda hit: (not hit.exact, not hit.hinted, rank(hit.place.kind), hit.distance_km))
@@ -345,9 +386,10 @@ class Gazetteer:
 
     @staticmethod
     def _hit(row: tuple, exact: bool, hinted: frozenset[str], near: tuple[float, float] | None) -> Hit:
-        _, name, kind, lon, lat, radius, alt_names = row
+        _, name, kind, lon, lat, radius, alt_names, outline = row
         distance = _distance_m(*near, lon, lat) / 1000 if near is not None else 0.0
-        place = Place(name, kind, lon, lat, radius, tuple(filter(None, alt_names.split(";"))))
+        vertices = tuple(map(tuple, json.loads(outline))) if outline else ()
+        place = Place(name, kind, lon, lat, radius, tuple(filter(None, alt_names.split(";"))), vertices)
         return Hit(place, exact, not hinted or kind in hinted, distance)
 
 
