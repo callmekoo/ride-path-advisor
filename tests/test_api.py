@@ -103,7 +103,7 @@ def test_walked_stretches_reach_the_response(grid, tmp_path):
 
 
 def test_malformed_spec_is_rejected(client, grid):
-    response = client.post("/api/route", json={"start": at(grid, 10, 10), "shape": "loop"})
+    response = client.post("/api/route", json={"start": at(grid, 10, 10), "shape": "p2p"})
     assert response.status_code == 422
 
 
@@ -290,7 +290,7 @@ def test_a_follow_up_shows_the_model_the_previous_request_and_what_was_offered(g
     assert "Предложенные варианты:\n1. Кольцо" in follow_up and "озеро Круглое; лес 0%" in follow_up
     assert follow_up.endswith("Новая реплика: подлиннее") and "60." not in follow_up
     assert second["spec"]["length_km"]["target"] == 20
-    assert second["spec"]["start"] == first["spec"]["start"] and second["spec"]["via"] == first["spec"]["via"]
+    assert second["spec"]["start"] == first["spec"]["start"] and second["spec"]["via"] == first["spec"]["via"] != []
 
 
 def test_parse_failures_are_explained(grid_engine, grid, tmp_path):

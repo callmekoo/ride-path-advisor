@@ -30,9 +30,28 @@ def test_loop_spec():
     assert spec.prefs == Prefs()
 
 
-def test_loop_needs_a_length():
-    with pytest.raises(ValueError, match="length"):
-        RouteSpec(start=START, shape="loop")
+def test_loop_may_come_without_a_length():
+    spec = RouteSpec(start=START, shape="loop")
+    assert spec.length_km is None and spec.via == []
+
+
+def test_via_is_an_ordered_list_of_points():
+    stops = [Point(lon=60.7 + i / 10, lat=56.9, label=f"п{i}") for i in range(3)]
+    spec = RouteSpec(start=START, shape="loop", via=stops)
+    assert [point.label for point in spec.via] == ["п0", "п1", "п2"]
+
+
+def test_via_takes_at_most_eight_points():
+    stops = [Point(lon=60.7, lat=56.9)] * 8
+    assert len(RouteSpec(start=START, shape="loop", via=stops).via) == 8
+    with pytest.raises(ValueError):
+        RouteSpec(start=START, shape="loop", via=[*stops, Point(lon=60.8, lat=56.9)])
+
+
+def test_named_places_and_a_kind_of_place_do_not_mix():
+    with pytest.raises(ValueError, match="either"):
+        RouteSpec(start=START, shape="loop", via=[END], via_category="water")
+    RouteSpec(start=START, shape="loop", via=[], via_category="water")
 
 
 def test_loop_takes_no_end_point():

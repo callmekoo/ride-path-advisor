@@ -61,6 +61,8 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
     """Up to `spec.n_candidates` distinct routes, best first; empty if nothing fits."""
     w = _with_avoided(engine, engine.weights(spec.prefs), spec.avoid)
     start, _ = engine.snapper.nearest_node(spec.start.lon, spec.start.lat)
+    if spec.shape == "loop" and spec.length_km is None and not spec.via:
+        return []
     must = None
     if spec.via_category == "water":
         if engine.at_water is None:
@@ -69,8 +71,9 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
     note = None
     end = start if spec.shape == "loop" else engine.snapper.nearest_node(spec.end.lon, spec.end.lat)[0]
     walks: list[Walk]
-    if spec.via is not None:
-        walks, note = _through_place(engine, w, start, _place_node(engine, spec.via), end, spec)
+    place = spec.via[0] if spec.via else None
+    if place is not None:
+        walks, note = _through_place(engine, w, start, _place_node(engine, place), end, spec)
     elif spec.shape == "loop":
         walks = _loops(engine, w, start, spec.length_km, must, spec.bearing_deg)
     else:
@@ -82,11 +85,11 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
     measured_walks = []
     for arcs, via in walks:
         via_label = None
-        if must is not None or spec.via is not None:
+        if must is not None or place is not None:
             # Trimming a spur may have cut the route off from the place it was meant to reach.
             if via is None or via not in engine.arc_head[arcs]:
                 continue
-            via_label = spec.via.label if spec.via is not None else engine.water_label(via)
+            via_label = place.label if place is not None else engine.water_label(via)
         measured = features(engine, w, arcs, spec.length_km)
         if rejection(measured, spec) is None:
             measured_walks.append((arcs, measured, via_label))
@@ -153,7 +156,7 @@ def _through_place(
     direct_m = _metres(engine, direct)
     length = spec.length_km
     if length is not None and length.max * 1000 < direct_m:
-        name = f"«{spec.via.label}»" if spec.via.label else "это место"
+        name = f"«{spec.via[0].label}»" if spec.via[0].label else "это место"
         return [(direct, place)], f"через {name} короче {direct_m / 1000:.0f} км не получится"
     walks: list[Walk] = []
     if length is None or length.min * 1000 <= direct_m:

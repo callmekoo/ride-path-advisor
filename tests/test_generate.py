@@ -194,7 +194,7 @@ def named(grid, i: int, j: int, label: str) -> Point:
 
 
 def test_loop_through_a_named_place_passes_it_and_fits_the_length(grid, grid_engine):
-    spec = loop_spec(grid, 10, 10, 16).model_copy(update={"via": named(grid, 14, 12, "Сысерть")})
+    spec = loop_spec(grid, 10, 10, 16).model_copy(update={"via": [named(grid, 14, 12, "Сысерть")]})
     candidates = generate(grid_engine, spec)
 
     assert len(candidates) >= 2
@@ -206,7 +206,7 @@ def test_loop_through_a_named_place_passes_it_and_fits_the_length(grid, grid_eng
 
 
 def test_place_too_far_for_the_wanted_loop_is_still_reached_with_a_note(grid, grid_engine):
-    spec = loop_spec(grid, 10, 10, 6).model_copy(update={"via": named(grid, 19, 10, "Дальнее")})
+    spec = loop_spec(grid, 10, 10, 6).model_copy(update={"via": [named(grid, 19, 10, "Дальнее")]})
     candidates = generate(grid_engine, spec)
 
     assert len(candidates) >= 1
@@ -218,7 +218,7 @@ def test_place_too_far_for_the_wanted_loop_is_still_reached_with_a_note(grid, gr
 
 
 def test_point_to_point_through_a_place_off_the_direct_line(grid, grid_engine):
-    spec = p2p_spec(grid, None).model_copy(update={"via": named(grid, 10, 16, "Гора")})
+    spec = p2p_spec(grid, None).model_copy(update={"via": [named(grid, 10, 16, "Гора")]})
     candidates = generate(grid_engine, spec)
 
     assert len(candidates) >= 1
@@ -229,7 +229,7 @@ def test_point_to_point_through_a_place_off_the_direct_line(grid, grid_engine):
 
 
 def test_point_to_point_through_a_place_with_a_length(grid, grid_engine):
-    spec = p2p_spec(grid, LengthKm.around(20)).model_copy(update={"via": named(grid, 10, 16, "Гора")})
+    spec = p2p_spec(grid, LengthKm.around(20)).model_copy(update={"via": [named(grid, 10, 16, "Гора")]})
     candidates = generate(grid_engine, spec)
 
     assert len(candidates) >= 1
@@ -268,9 +268,14 @@ def test_a_route_passes_a_named_place_or_a_kind_of_place_but_not_both(grid):
             start=point(grid, 10, 10),
             shape="loop",
             length_km=LengthKm.around(10),
-            via=point(grid, 12, 12),
+            via=[point(grid, 12, 12)],
             via_category="water",
         )
+
+
+def test_a_loop_without_a_length_or_a_place_offers_nothing_yet(grid, grid_engine):
+    spec = RouteSpec(start=point(grid, 10, 10), shape="loop")
+    assert generate(grid_engine, spec) == []
 
 
 def with_peninsula(grid):
@@ -312,7 +317,7 @@ def test_a_place_on_a_dead_end_road_is_ridden_to_and_back_from(grid):
     graph, fork = with_peninsula(grid)
     engine = Engine(graph)
     lon, lat = graph.node_lonlat[fork].tolist()
-    spec = loop_spec(grid, 10, 10, 16).model_copy(update={"via": Point(lon=lon, lat=lat, label="Мыс")})
+    spec = loop_spec(grid, 10, 10, 16).model_copy(update={"via": [Point(lon=lon, lat=lat, label="Мыс")]})
     candidates = generate(engine, spec)
 
     assert len(candidates) >= 1

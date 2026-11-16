@@ -109,7 +109,7 @@ def describe(spec: RouteSpec) -> ParsedRequest:
     return ParsedRequest(
         shape=spec.shape,
         end=spec.end.label if spec.end else None,
-        via=spec.via.label if spec.via else None,
+        via=spec.via[0].label if spec.via else None,
         via_water=True if spec.via_category == "water" else None,
         length_km=round(length.target, 1) if length and about else None,
         length_min_km=round(length.min, 1) if length and not about else None,

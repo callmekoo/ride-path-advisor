@@ -119,7 +119,7 @@ def _resolve(parsed: ParsedRequest, context: Context) -> Resolved:
         shape=shape,
         length_km=length,
         prefs=prefs,
-        via=via.point if via else None,
+        via=[via.point] if via else [],
         via_category="water" if parsed.via_water and via is None else None,
         avoid=avoid,
         bearing_deg=_bearing(parsed, context, start.point) if shape == "loop" and via is None else None,
@@ -200,7 +200,7 @@ def _option(hit: Hit, near: tuple[float, float] | None) -> Point:
 def _previous_points(previous: RouteSpec | None) -> list[Point]:
     if previous is None:
         return []
-    points = [previous.start, previous.end, previous.via, *(area.point for area in previous.avoid)]
+    points = [previous.start, previous.end, *previous.via, *(area.point for area in previous.avoid)]
     return [point for point in points if point is not None]
 
 

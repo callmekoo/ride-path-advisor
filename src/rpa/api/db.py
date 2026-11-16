@@ -13,6 +13,10 @@ from pathlib import Path
 
 KEEP_REQUESTS = 200
 
+# Bumped whenever the JSON stored in requests, candidates and routes changes shape.
+# An older database loses those (they are only history); saved places stay.
+SCHEMA_VERSION = 2
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS places (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,6 +69,10 @@ class Db:
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(_SCHEMA)
+            if connection.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+                connection.executescript(
+                    f"DELETE FROM candidates; DELETE FROM requests; DELETE FROM routes; PRAGMA user_version = {SCHEMA_VERSION};"
+                )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

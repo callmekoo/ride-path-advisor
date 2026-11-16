@@ -26,7 +26,7 @@ export interface RouteSpec {
   shape: "loop" | "p2p";
   length_km: { target: number; min: number; max: number } | null;
   prefs: Prefs;
-  via: Point | null;
+  via: Point[];
   via_category: "water" | null;
   avoid: { point: Point; radius_m: number }[];
   bearing_deg: number | null;

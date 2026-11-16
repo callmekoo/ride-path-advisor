@@ -54,7 +54,7 @@ class RouteSpec(BaseModel):
     shape: Literal["loop", "p2p"]
     length_km: LengthKm | None = None
     prefs: Prefs = Prefs()
-    via: Point | None = None  # a place the route must pass; its label names it in the result
+    via: list[Point] = Field(default=[], max_length=8)  # places the route must pass, in order; labels name them
     via_category: Literal["water"] | None = None  # the route must pass a place of this kind
     avoid: list[AvoidArea] = []
     bearing_deg: float | None = Field(default=None, ge=0, lt=360)  # where a loop should head; 0 = north
@@ -62,13 +62,11 @@ class RouteSpec(BaseModel):
 
     @model_validator(mode="after")
     def _shape_matches_fields(self) -> Self:
-        if self.via is not None and self.via_category is not None:
+        if self.via and self.via_category is not None:
             raise ValueError("a route passes either a named place or a kind of place, not both")
         if self.shape == "loop":
             if self.end is not None:
                 raise ValueError("a loop returns to its start and takes no end point")
-            if self.length_km is None:
-                raise ValueError("a loop needs a length")
         elif self.end is None:
             raise ValueError("a point-to-point route needs an end point")
         return self

@@ -56,7 +56,7 @@ def test_a_plain_loop_starts_at_the_default_place_with_default_preferences(conte
     assert spec.shape == "loop" and position(spec.start) == at(grid, 10, 10) and spec.start.label == "Дом"
     assert spec.length_km == LengthKm.around(45)
     assert spec.prefs == RouteSpec.model_fields["prefs"].default
-    assert (spec.end, spec.via, spec.via_category, spec.avoid, spec.bearing_deg) == (None, None, None, [], None)
+    assert (spec.end, spec.via, spec.via_category, spec.avoid, spec.bearing_deg) == (None, [], None, [], None)
 
 
 def test_preferences_are_carried_over(context):
@@ -116,7 +116,7 @@ def test_a_route_somewhere_needs_to_know_where(context):
 
 def test_a_loop_to_a_place_passes_it(context, grid):
     spec = resolve(ParsedRequest(shape="loop", end="Ревда", length_km=20), context).spec
-    assert spec.end is None and position(spec.via) == at(grid, 4, 4) and spec.via.label == "Ревда (город)"
+    assert spec.end is None and [position(point) for point in spec.via] == [at(grid, 4, 4)] and spec.via[0].label == "Ревда (город)"
 
 
 @pytest.mark.parametrize(
@@ -153,12 +153,12 @@ def test_namesakes_that_are_both_plausible_are_asked_about(context, grid):
 
     context.picks = {"Ключи": question.options[1]}
     spec = resolve(ParsedRequest(length_km=20, via="Ключи"), context).spec
-    assert position(spec.via) == at(grid, 18, 10) and spec.via.label == "Ключи (село), 4 км на восток"
+    assert [position(point) for point in spec.via] == [at(grid, 18, 10)] and spec.via[0].label == "Ключи (село), 4 км на восток"
 
 
 def test_a_namesake_far_away_is_not_asked_about(context, grid):
     spec = resolve(ParsedRequest(length_km=20, via="Сосновка"), context).spec
-    assert position(spec.via) == at(grid, 10, 14) and spec.via.label == "Сосновка (деревня)"
+    assert [position(point) for point in spec.via] == [at(grid, 10, 14)] and spec.via[0].label == "Сосновка (деревня)"
 
 
 def test_unknown_and_inexact_names_are_asked_about(context):
@@ -175,10 +175,10 @@ def test_unknown_and_inexact_names_are_asked_about(context):
 
 def test_water_in_general_and_a_named_lake_are_different_wishes(context, grid):
     general = resolve(ParsedRequest(length_km=45, via_water=True), context).spec
-    assert general.via_category == "water" and general.via is None
+    assert general.via_category == "water" and general.via == []
 
     resolved = resolve(ParsedRequest(length_km=45, via="озеро Круглое", via_water=True), context)
-    assert resolved.spec.via_category is None and position(resolved.spec.via) == at(grid, 16, 16)
+    assert resolved.spec.via_category is None and [position(point) for point in resolved.spec.via] == [at(grid, 16, 16)]
     assert len(resolved.warnings) == 1 and "озеро Круглое" in resolved.warnings[0]
 
 
@@ -197,7 +197,7 @@ def test_a_loop_can_head_a_compass_side_a_place_or_the_way_of_an_earlier_candida
     assert resolve(ParsedRequest(length_km=45, direction="NW"), context).spec.bearing_deg == 315.0
 
     towards = resolve(ParsedRequest(length_km=45, toward="Ревда"), context).spec
-    assert towards.bearing_deg == pytest.approx(225, abs=3) and towards.via is None
+    assert towards.bearing_deg == pytest.approx(225, abs=3) and towards.via == []
 
     home = at(grid, 10, 10)
     context.previous_candidates = [[home, at(grid, 10, 16), home], [home, at(grid, 4, 10), at(grid, 8, 9), home]]

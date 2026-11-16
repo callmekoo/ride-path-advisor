@@ -1,8 +1,9 @@
 import json
+import sqlite3
 
 import pytest
 
-from rpa.api.db import KEEP_REQUESTS, Db, DuplicateName
+from rpa.api.db import KEEP_REQUESTS, SCHEMA_VERSION, Db, DuplicateName
 
 
 @pytest.fixture
@@ -130,3 +131,51 @@ def test_saved_routes_are_listed_newest_first_and_can_be_deleted(db):
     assert db.routes() == [second, first]
     assert db.delete_route(first["id"]) and not db.delete_route(first["id"])
     assert db.routes() == [second]
+
+
+def _set_version(path, version: int) -> None:
+    connection = sqlite3.connect(path)
+    connection.execute(f"PRAGMA user_version = {version}")
+    connection.commit()
+    connection.close()
+
+
+def _version(path) -> int:
+    connection = sqlite3.connect(path)
+    try:
+        return connection.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("old_version", [0, 1])
+def test_an_older_schema_loses_requests_and_routes_but_keeps_places(tmp_path, old_version):
+    path = tmp_path / "rpa.sqlite"
+    old = Db(path)
+    old.add_place("дом", 60.6, 56.84)
+    _, ids = old.save_request("{}", [body("Кольцо", 45.0)])
+    old.save_route(ids[0])
+    _set_version(path, old_version)
+
+    reopened = Db(path)
+
+    assert [place["name"] for place in reopened.places()] == ["дом"]
+    assert reopened.candidate(ids[0]) is None and reopened.request(1) is None and reopened.routes() == []
+    assert _version(path) == SCHEMA_VERSION == 2
+
+
+def test_reopening_a_current_database_erases_nothing(tmp_path):
+    path = tmp_path / "rpa.sqlite"
+    first = Db(path)
+    first.add_place("дом", 60.6, 56.84)
+    request_id, ids = first.save_request("{}", [body("Кольцо", 45.0)])
+    saved = first.save_route(ids[0])
+
+    again = Db(path)
+
+    assert again.request(request_id) is not None and again.routes() == [saved] and len(again.places()) == 1
+
+
+def test_a_new_database_starts_at_the_current_version(tmp_path):
+    Db(tmp_path / "rpa.sqlite")
+    assert _version(tmp_path / "rpa.sqlite") == SCHEMA_VERSION

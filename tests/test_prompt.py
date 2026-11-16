@@ -52,7 +52,7 @@ def test_a_range_and_named_places_are_described_too():
         end=Point(lon=59.93, lat=56.8, label="Ревда (город)"),
         shape="p2p",
         length_km=LengthKm.between(100, 150),
-        via=Point(lon=60.2, lat=56.75, label="Волчиха (гора)"),
+        via=[Point(lon=60.2, lat=56.75, label="Волчиха (гора)")],
     )
     described = describe(spec)
 
