@@ -186,3 +186,37 @@ def test_a_loop_cutting_a_corner_does_not(pond):
 def test_there_and_back_does_not(pond):
     there = [(pond.point.lon - 0.05 + i * 0.01, pond.point.lat - 0.03) for i in range(11)]
     assert not encloses(there + there[::-1], pond)
+
+
+def square_object(origin, half: float) -> Around:
+    """A square of 2 * `half` metres around `origin`, with only its four corners as vertices."""
+    corners = from_local(np.array([(-half, -half), (half, -half), (half, half), (-half, half)]), origin)
+    return Around(point=Point(lon=origin[0], lat=origin[1]), radius_m=half, outline=corners.tolist())
+
+
+def lonlat(xy, origin) -> list[tuple[float, float]]:
+    return [tuple(p) for p in from_local(np.array(xy, dtype=float), origin)]
+
+
+# A point on the route turns neither way about itself; rounding noise used to decide the verdict.
+SQUARES = [(origin, half) for origin in [(60.6, 56.84), (60.0, 56.8), (61.3, 57.1)] for half in (100.0, 137.5, 250.0)]
+
+
+@pytest.mark.parametrize(("origin", "half"), SQUARES)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_a_vertex_on_the_route_counts_as_enclosed(origin, half, reverse):
+    # The loop cuts diagonally past the north-east corner of the square, straight through it.
+    route = [(-2, -2), (2, -2), (2, 0), (1, 1), (0, 2), (-2, 2)]
+    route = [(x * half, y * half) for x, y in (route[::-1] if reverse else route)]
+    assert encloses(lonlat(route, origin), square_object(origin, half))
+
+
+@pytest.mark.parametrize(("origin", "half"), SQUARES)
+def test_a_route_through_the_inner_point_is_judged_by_the_vertices(origin, half):
+    obj = square_object(origin, half)
+    x, y = object_polygon(obj).representative_point().coords[0]
+    # Around, then straight across the square through the inner point, and back out the way it came.
+    around = [(-2 * half, -2 * half), (2 * half, -2 * half), (2 * half, 2 * half), (-2 * half, 2 * half)]
+    assert encloses(lonlat([*around, (-2 * half, y), (x - half / 2, y), (x, y), (x + half / 2, y), (-2 * half, y)], origin), obj)
+    beside = [(3 * half, -2 * half), (6 * half, -2 * half), (6 * half, 2 * half), (3 * half, 2 * half)]
+    assert not encloses(lonlat(beside, origin), obj)

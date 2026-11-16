@@ -11,6 +11,7 @@ from rpa.routing.cost import Prefs
 from rpa.routing.diversity import core_edges, overlap
 from rpa.routing.engine import Engine
 from rpa.routing.generate import APPENDIX_SHARE, MIN_APPENDIX_M, _passes_in_order, generate
+from rpa.routing.path import build_path
 from rpa.routing.ring import encloses
 from rpa.routing.spec import Around, AvoidArea, LengthKm, Point, RouteSpec
 
@@ -712,3 +713,24 @@ def test_a_far_start_with_one_road_there_gets_the_least_repeating_ride_with_a_no
     assert_around(engine, candidates, spec, 0, 10)
     assert candidates[0].features.repeat_share > 0.3
     assert candidates[0].note == "подъезд и возврат по одной дороге"
+
+
+# A town over the blocks between the streets i = 7..13, j = 7..13; its streets are all there.
+TOWN = (7, 13, 7, 13)
+
+
+@pytest.mark.parametrize("start", [(9, 11), (12, 9)])  # off-centre, and near the town's edge
+@pytest.mark.parametrize("km", [None, 30.0])
+def test_a_ride_around_a_town_from_inside_it_rides_out_around_and_back(grid, grid_engine, start, km):
+    spec = around_spec(grid, *start, box=TOWN, label="Ревда (город)", km=km)
+    candidates = generate(grid_engine, spec)
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert_sound(grid_engine, candidate.path.arcs, node(*start), node(*start))
+        assert candidate.via_label == "вокруг: Ревда" and candidate.note is None
+        # The way out and back crosses the town; the ring itself goes round it and closes.
+        core = candidate.core_arcs
+        assert grid_engine.arc_tail[core[0]] == grid_engine.arc_head[core[-1]]
+        assert encloses(build_path(grid, core).coords, spec.around)
+        if km is not None:
+            assert 27.0 <= candidate.path.length_m / 1000 <= 33.0

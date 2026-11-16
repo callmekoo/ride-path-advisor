@@ -6,10 +6,11 @@ local metres around the object's point.
 """
 
 import math
+from collections import Counter
 
 import numpy as np
 import shapely
-from shapely.geometry import LinearRing, Polygon
+from shapely.geometry import LinearRing, LineString, Polygon
 from shapely.geometry.polygon import orient
 
 from rpa.routing.geo import EARTH_RADIUS_M
@@ -17,6 +18,7 @@ from rpa.routing.spec import Around
 
 MIN_AROUND_RADIUS_M = 300.0  # a point object is circled at least this widely
 ENCLOSED_VERTEX_SHARE = 0.9  # of the object's outline vertices, this many must be circled
+ON_ROUTE_M = 0.01  # a point this close to a route lies on it
 _CIRCLE_VERTICES = 16
 _M_PER_DEG = EARTH_RADIUS_M * math.pi / 180
 
@@ -86,13 +88,30 @@ def winding_number(xy, point) -> int:
 
 def encloses(coords_lonlat, around: Around) -> bool:
     """Whether a route goes once around the object: one full turn about its inner point, and the same
-    turn about at least `ENCLOSED_VERTEX_SHARE` of its outline's vertices (so cutting a corner fails)."""
+    turn about at least `ENCLOSED_VERTEX_SHARE` of its outline's vertices (so cutting a corner fails).
+
+    A point the route runs through turns neither way about itself, so it cannot be judged: a vertex on
+    the route counts as circled, and when the inner point is on the route, the turn the vertices off
+    the route mostly share stands in for it.
+    """
     origin = (around.point.lon, around.point.lat)
     route = to_local(coords_lonlat, origin)
+    if len(route) < 3:
+        return False
+    line = LineString(np.vstack([route, route[:1]]))  # closed, as `winding_number` takes it
     polygon = object_polygon(around)
-    turns = winding_number(route, polygon.representative_point().coords[0])
+    vertices = np.array(polygon.exterior.coords[:-1])
+    on_route = shapely.distance(line, shapely.points(vertices)) <= ON_ROUTE_M
+    turns_about = [0 if on else winding_number(route, vertex) for vertex, on in zip(vertices, on_route, strict=True)]
+    inner = polygon.representative_point()
+    if line.distance(inner) > ON_ROUTE_M:
+        turns = winding_number(route, inner.coords[0])
+    else:
+        off = [t for t, on in zip(turns_about, on_route, strict=True) if not on]
+        if not off:
+            return False
+        turns = Counter(off).most_common(1)[0][0]
     if abs(turns) != 1:
         return False
-    vertices = np.array(polygon.exterior.coords[:-1])
-    same = sum(winding_number(route, vertex) == turns for vertex in vertices)
+    same = sum(on or t == turns for t, on in zip(turns_about, on_route, strict=True))
     return same >= ENCLOSED_VERTEX_SHARE * len(vertices)

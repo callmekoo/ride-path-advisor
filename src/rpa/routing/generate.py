@@ -524,6 +524,7 @@ class _Ring:
     radius_m: float  # of a circle with the object's area
     start: int
     start_xy: tuple[float, float]
+    start_inside: bool  # the start lies in the object, e.g. at home in the town to be ridden around
     nice: np.ndarray
     usable: np.ndarray
     there: np.ndarray  # cost from the start to each node
@@ -559,6 +560,7 @@ def _ring(engine: Engine, w: np.ndarray, start: int, around: Around) -> _Ring:
         radius_m=math.sqrt(polygon.area / math.pi),
         start=start,
         start_xy=(float(start_xy[0]), float(start_xy[1])),
+        start_inside=bool(polygon.contains(shapely.Point(start_xy))),
         nice=engine.node_niceness(w),
         usable=usable,
         there=there,
@@ -674,7 +676,9 @@ def _ring_walk(
     and north. Every anchor takes the nicest junction near it that lies outside the object and
     beside the anchor along the ring, so that a ring across a bay does not snap to its far shore.
     The ride goes from the start to the anchor that is cheapest to reach and leave from, around,
-    and back; a start near the ring takes the place of the anchor nearest to it.
+    and back; a start near the ring takes the place of the anchor nearest to it. A start inside the
+    object closes the ring at the anchor it entered by, since the way back crosses the object: only
+    the ring is then required to go around it.
     """
     border = shapely.affinity.translate(rings.ring_border(ring.polygon, offset_m), *shift)
     n = int(np.clip(round(border.length / AROUND_SPACING_M), MIN_ANCHORS, MAX_ANCHORS))
@@ -684,7 +688,7 @@ def _ring_walk(
 
     start_point = shapely.Point(ring.start_xy)
     start_slot = None
-    if border.distance(start_point) < step / 2:
+    if not ring.start_inside and border.distance(start_point) < step / 2:
         start_slot = int(np.argmin(_along(positions, border.project(start_point), border.length)))
 
     def beside(slot: int) -> Callable[[np.ndarray], np.ndarray]:
@@ -713,6 +717,9 @@ def _ring_walk(
     if start_slot is not None:
         at = nodes.index(ring.start)
         order = nodes[at + 1 :] + nodes[:at]
+    elif ring.start_inside:
+        at = int(np.argmin([ring.there[node] + ring.back[node] for node in nodes]))
+        order = nodes[at:] + nodes[:at] + [nodes[at]]
     else:
         at = int(np.argmin([ring.there[nodes[e]] + ring.back[nodes[e - 1]] for e in range(len(nodes))]))
         order = nodes[at:] + nodes[:at]
@@ -727,9 +734,13 @@ def _ring_walk(
     if len(arcs) == 0:
         return None
     path = build_path(engine.g, arcs)
-    if not rings.encloses(path.coords, ring.around):
-        return None
     core = arcs if start_slot is not None else _ring_core(engine, arcs, order[0], order[-1])
+    if ring.start_inside:
+        closed = len(core) < len(arcs) and engine.arc_tail[core[0]] == engine.arc_head[core[-1]]
+        if not closed or not rings.encloses(build_path(engine.g, core).coords, ring.around):
+            return None
+    elif not rings.encloses(path.coords, ring.around):
+        return None
     return _RingWalk(arcs, core, offset_m, path)
 
 
