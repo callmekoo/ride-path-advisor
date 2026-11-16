@@ -1,10 +1,12 @@
+from itertools import pairwise
+
 import numpy as np
 from helpers import arcs_via, node_index, square
 
 from rpa.routing.cost import Prefs
 from rpa.routing.engine import Engine
 from rpa.routing.trim import cut_small_loops, tidy, trim_spurs
-from rpa.routing.walk import route_through
+from rpa.routing.walk import route_legs, route_through
 
 
 def node(i: int, j: int) -> int:
@@ -171,3 +173,19 @@ def test_walk_tolerates_a_repeated_stop(grid_engine):
     walk = route_through(grid_engine, w, [node(5, 5), node(5, 5), node(8, 5)])
     assert grid_engine.arc_tail[walk[0]] == node(5, 5)
     assert grid_engine.arc_head[walk[-1]] == node(8, 5)
+
+
+def test_legs_are_the_walk_split_at_the_stops(grid_engine):
+    w = grid_engine.weights(Prefs())
+    stops = [node(5, 5), node(15, 5), node(15, 12), node(5, 5)]
+    legs = route_legs(grid_engine, w, stops)
+    assert len(legs) == 3
+    for leg, (a, b) in zip(legs, pairwise(stops), strict=True):
+        assert grid_engine.arc_tail[leg[0]] == a and grid_engine.arc_head[leg[-1]] == b
+    assert np.concatenate(legs).tolist() == route_through(grid_engine, w, stops).tolist()
+
+
+def test_legs_are_none_when_a_leg_is_impossible(micro):
+    engine = Engine(micro)
+    w = engine.weights(Prefs())
+    assert route_legs(engine, w, [node_index(micro, 4), node_index(micro, 7), node_index(micro, 4)]) is None

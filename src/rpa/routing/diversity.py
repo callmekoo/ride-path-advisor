@@ -32,15 +32,21 @@ def select_diverse(
     edge_len: np.ndarray,
     max_overlap: float = 0.4,
     skip_m: float = 2000.0,
+    chosen: list[Candidate] | None = None,
 ) -> list[Candidate]:
-    """Best-first selection of up to `n` candidates no two of which overlap more than `max_overlap`."""
-    chosen: list[Candidate] = []
-    chosen_edges: list[np.ndarray] = []
+    """Best-first selection of up to `n` candidates no two of which overlap more than `max_overlap`.
+
+    `chosen` are kept ahead of the rest, e.g. what a stricter selection already took.
+    """
+    chosen = list(chosen or [])
+    chosen_edges = [core_edges(c.path.arcs, edge_len, skip_m) for c in chosen]
     for candidate in sorted(candidates, key=lambda c: c.score, reverse=True):
+        if len(chosen) >= n:
+            break
+        if any(candidate is other for other in chosen):
+            continue
         edges = core_edges(candidate.path.arcs, edge_len, skip_m)
         if all(overlap(edges, other, edge_len) <= max_overlap for other in chosen_edges):
             chosen.append(candidate)
             chosen_edges.append(edges)
-            if len(chosen) == n:
-                break
     return chosen

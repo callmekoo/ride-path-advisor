@@ -11,10 +11,10 @@ from rpa.routing.engine import Engine
 USED_EDGE_FACTOR = 20.0
 
 
-def route_through(
+def route_legs(
     engine: Engine, w: np.ndarray, nodes: list[int], may_turn_back_at: frozenset[int] = frozenset()
-) -> np.ndarray | None:
-    """Arcs of a walk visiting `nodes` in order, or None if some leg has no route.
+) -> list[np.ndarray] | None:
+    """Arcs of each leg of a walk visiting `nodes` in order, or None if some leg has no route.
 
     Works on a private copy of `w`. After each leg its edges become expensive
     in both directions, and turning straight back at the end of a leg is
@@ -38,4 +38,14 @@ def route_through(
             w[2 * edges + 1] *= USED_EDGE_FACTOR
             last_arc = int(arcs[-1])
         legs.append(arcs)
+    return legs
+
+
+def route_through(
+    engine: Engine, w: np.ndarray, nodes: list[int], may_turn_back_at: frozenset[int] = frozenset()
+) -> np.ndarray | None:
+    """The legs of `route_legs` joined into one walk, or None if some leg has no route."""
+    legs = route_legs(engine, w, nodes, may_turn_back_at)
+    if legs is None:
+        return None
     return np.concatenate(legs) if legs else np.empty(0, dtype=np.uint32)

@@ -144,6 +144,17 @@ def test_select_diverse_respects_the_requested_count(grid_engine):
     assert select_diverse([a, b], 1, grid_engine.length) == [a]
 
 
+def test_select_diverse_keeps_an_earlier_choice_first_and_adds_to_it(grid_engine):
+    def ring(north: int) -> np.ndarray:
+        return arcs_via(grid_engine, node(2, 2), node(10, 2), node(10, north), node(2, north), node(2, 2))
+
+    kept = candidate(grid_engine, ring(6), 70.0)
+    better = candidate(grid_engine, ring(7), 90.0)  # shares 16 of 34 edges with `kept`
+    twin = candidate(grid_engine, ring(6), 80.0)
+    chosen = select_diverse([twin, better, kept], 3, grid_engine.length, 0.6, skip_m=0.0, chosen=[kept])
+    assert chosen == [kept, better]
+
+
 def test_shared_start_and_finish_do_not_count_as_overlap(grid_engine):
     # Both loops leave and return along the same 2.5 km street, then go separate ways.
     stem_out = arcs_via(grid_engine, node(0, 10), node(5, 10))

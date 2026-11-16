@@ -5,7 +5,8 @@ on the corners of a regular polygon that has the start as one corner. Many
 polygons are tried (different corner counts and orientations); each is
 resized until the walk has the wanted length. A point-to-point route with a
 target length goes through one via node chosen so that the way there plus the
-way on add up to the target.
+way on add up to the target. A route through named places follows them in
+the given order and is lengthened, when it has to be, on its last leg.
 
 All attempts run in a thread pool: the search kernel releases the GIL.
 """
@@ -22,8 +23,8 @@ from rpa.routing.geo import destination
 from rpa.routing.path import build_path
 from rpa.routing.score import Candidate, features, rejection, score
 from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
-from rpa.routing.trim import tidy, trim_spurs
-from rpa.routing.walk import route_through
+from rpa.routing.trim import tidy
+from rpa.routing.walk import route_legs, route_through
 
 # First guess at how much longer roads are than the straight line between two points.
 DETOUR = 1.3
@@ -51,17 +52,22 @@ AVOID_FACTOR = 8.0
 HEADING_TOLERANCE_DEG = 45.0
 # Without a wanted length, a route through a place may also take detours about this much longer.
 PLACE_DETOUR = 1.2
+# Routes through named places all share the roads near the places; when the usual limit leaves
+# fewer than the wanted number of routes, more are taken that overlap the chosen ones up to this much.
+VIA_MAX_OVERLAP = 0.6
 N_WORKERS = min(8, os.cpu_count() or 1)
 
-# The arcs of a walk and the node it was asked to pass (None if there was no such wish).
-Walk = tuple[np.ndarray, int | None]
+# The arcs of a walk and the nodes it was asked to pass, in order (empty if there was no such wish).
+Walk = tuple[np.ndarray, tuple[int, ...]]
 
 
 def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
     """Up to `spec.n_candidates` distinct routes, best first; empty if nothing fits."""
     w = _with_avoided(engine, engine.weights(spec.prefs), spec.avoid)
     start, _ = engine.snapper.nearest_node(spec.start.lon, spec.start.lat)
-    if spec.shape == "loop" and spec.length_km is None and not spec.via:
+    end = start if spec.shape == "loop" else engine.snapper.nearest_node(spec.end.lon, spec.end.lat)[0]
+    places = _chain(start, [_place_node(engine, p) for p in spec.via], end)
+    if spec.shape == "loop" and spec.length_km is None and not places:
         return []
     must = None
     if spec.via_category == "water":
@@ -69,11 +75,9 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
             return []  # water was asked for, but the graph has not been enriched with it
         must = engine.water_rank
     note = None
-    end = start if spec.shape == "loop" else engine.snapper.nearest_node(spec.end.lon, spec.end.lat)[0]
     walks: list[Walk]
-    place = spec.via[0] if spec.via else None
-    if place is not None:
-        walks, note = _through_place(engine, w, start, _place_node(engine, place), end, spec)
+    if places:
+        walks, note = _through_places(engine, w, start, places, end, spec)
     elif spec.shape == "loop":
         walks = _loops(engine, w, start, spec.length_km, must, spec.bearing_deg)
     else:
@@ -82,14 +86,13 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
         # The length could not be honoured; judge the routes on everything else.
         spec = spec.model_copy(update={"length_km": None})
 
+    chain_label = (" → ".join(p.label for p in spec.via if p.label) or None) if places else None
     measured_walks = []
-    for arcs, via in walks:
-        via_label = None
-        if must is not None or place is not None:
-            # Trimming a spur may have cut the route off from the place it was meant to reach.
-            if via is None or via not in engine.arc_head[arcs]:
-                continue
-            via_label = place.label if place is not None else engine.water_label(via)
+    for arcs, required in walks:
+        # Trimming may have cut the route off from a place it was meant to reach.
+        if not _passes_in_order(engine, arcs, required):
+            continue
+        via_label = engine.water_label(required[0]) if must is not None else chain_label
         measured = features(engine, w, arcs, spec.length_km)
         if rejection(measured, spec) is None:
             measured_walks.append((arcs, measured, via_label))
@@ -100,9 +103,22 @@ def generate(engine: Engine, spec: RouteSpec) -> list[Candidate]:
         for arcs, m, via_label in measured_walks
     ]
     chosen = select_diverse(candidates, spec.n_candidates, engine.length)
+    if places and len(chosen) < spec.n_candidates:
+        chosen = select_diverse(candidates, spec.n_candidates, engine.length, VIA_MAX_OVERLAP, chosen=chosen)
     for candidate in chosen:
         candidate.profile = engine.profile(candidate.path.arcs)
     return chosen
+
+
+def _chain(start: int, places: list[int], end: int) -> list[int]:
+    """The nodes of the places to pass, without repeats in a row and without those at the start or the end."""
+    chain = [start]
+    for place in places:
+        if place != chain[-1]:
+            chain.append(place)
+    if len(chain) > 1 and chain[-1] == end:
+        chain.pop()
+    return chain[1:]
 
 
 def _metres(engine: Engine, arcs: np.ndarray) -> float:
@@ -146,43 +162,86 @@ def _place_node(engine: Engine, place: Point) -> int:
     return int(near[np.argmin(np.hypot(east, position[:, 1] - place.lat))])
 
 
-def _through_place(
-    engine: Engine, w: np.ndarray, start: int, place: int, end: int, spec: RouteSpec
+def _through_places(
+    engine: Engine, w: np.ndarray, start: int, places: list[int], end: int, spec: RouteSpec
 ) -> tuple[list[Walk], str | None]:
-    """Walks start -> place -> end (a loop when end is the start), plus a note if the length cannot be honoured."""
-    direct = _walk_via_place(engine, w, [start, place, end], place)
-    if direct is None:
+    """Walks start -> places -> end (a loop when end is the start), plus a note if the length cannot be honoured."""
+    walks = _chain_alternatives(engine, w, [start, *places, end], places, 2 * spec.n_candidates)
+    if not walks:
         return [], None
-    direct_m = _metres(engine, direct)
+    direct_m = _metres(engine, walks[0][0])
     length = spec.length_km
     if length is not None and length.max * 1000 < direct_m:
-        name = f"«{spec.via[0].label}»" if spec.via[0].label else "это место"
-        return [(direct, place)], f"через {name} короче {direct_m / 1000:.0f} км не получится"
-    walks: list[Walk] = []
-    if length is None or length.min * 1000 <= direct_m:
-        walks.append((direct, place))
+        return walks, f"через {_places_name(spec.via)} короче {direct_m / 1000:.0f} км не получится"
+    if length is not None and length.min * 1000 <= direct_m:
+        return walks, None
     if length is None:
         length = LengthKm.around(PLACE_DETOUR * direct_m / 1000, 0.15)
-    return walks + _detours(engine, w, place, end, length, None, before=start), None
+    else:
+        walks = []  # all shorter than wanted
+    return walks + _detours(engine, w, places[-1], end, length, None, lead=[start, *places[:-1]]), None
 
 
-def _walk_via_place(engine: Engine, w: np.ndarray, nodes: list[int], place: int) -> np.ndarray | None:
-    """A walk through `nodes`, one of which is the named place `place`, with stray spurs trimmed.
+def _places_name(via: list[Point]) -> str:
+    """The places a route goes through, as a note names them: by their labels when they have any."""
+    labels = [f"«{p.label}»" for p in via if p.label]
+    if labels:
+        return ", ".join(labels)
+    return "эти места" if len(via) > 1 else "это место"
+
+
+def _chain_alternatives(engine: Engine, w: np.ndarray, nodes: list[int], places: list[int], count: int) -> list[Walk]:
+    """The best walk through `nodes`, then walks found after making the earlier ones' edges dearer.
+
+    The dearer weights only steer the search; the walks are judged later on `w` itself.
+    """
+    w = w.copy()
+    walks: list[Walk] = []
+    for _ in range(count):
+        arcs = _walk_via_places(engine, w, nodes, frozenset(places))
+        if arcs is None or len(arcs) == 0:
+            break
+        walks.append((arcs, tuple(places)))
+        edges = np.unique(arcs >> 1)
+        w[2 * edges] *= ALTERNATIVE_FACTOR
+        w[2 * edges + 1] *= ALTERNATIVE_FACTOR
+    return walks
+
+
+def _walk_via_places(engine: Engine, w: np.ndarray, nodes: list[int], places: frozenset[int]) -> np.ndarray | None:
+    """A walk through `nodes`, some of which are the named `places`, with stray spurs and small loops cut.
 
     A place on a dead-end road is ridden to and back from: turning back is
-    allowed there when the walk is impossible otherwise, and that spur is kept.
+    allowed at the places when the walk is impossible otherwise. Each stretch
+    between two places is tidied on its own, so that the spur to a place survives.
     """
-    arcs = route_through(engine, w, nodes)
-    if arcs is None:
-        arcs = route_through(engine, w, nodes, may_turn_back_at=frozenset({place}))
-    if arcs is None:
+    legs = route_legs(engine, w, nodes)
+    if legs is None:
+        legs = route_legs(engine, w, nodes, may_turn_back_at=places)
+    if legs is None:
         return None
-    reached = np.flatnonzero(engine.arc_head[arcs] == place)
-    if len(reached) == 0:
-        return trim_spurs(arcs)
-    # Trim each side of the place on its own, so that the spur leading to it survives.
-    cut = int(reached[0]) + 1
-    return np.concatenate([trim_spurs(arcs[:cut]), trim_spurs(arcs[cut:])])
+    max_loop_m = _max_appendix_m(sum(_metres(engine, leg) for leg in legs))
+    stretches: list[np.ndarray] = []
+    stretch: list[np.ndarray] = []
+    for i, (leg, reached) in enumerate(zip(legs, nodes[1:], strict=True)):
+        stretch.append(leg)
+        if reached in places or i == len(legs) - 1:
+            arcs = np.concatenate(stretch)
+            stretches.append(tidy(arcs, engine.arc_tail, engine.arc_head, engine.length, max_loop_m, places))
+            stretch = []
+    return np.concatenate(stretches) if stretches else np.empty(0, dtype=np.uint32)
+
+
+def _passes_in_order(engine: Engine, arcs: np.ndarray, required: tuple[int, ...]) -> bool:
+    """Whether the walk `arcs` reaches every node of `required`, in that order (its start counts)."""
+    if len(arcs) == 0:
+        return not required
+    wanted = iter(required)
+    pending = next(wanted, None)
+    for reached in [int(engine.arc_tail[arcs[0]]), *engine.arc_head[arcs].tolist()]:
+        if reached == pending:
+            pending = next(wanted, None)
+    return pending is None
 
 
 def _nicest(engine: Engine, nice: np.ndarray, nodes: np.ndarray, lon: float, lat: float) -> int:
@@ -255,7 +314,7 @@ def _fit_loop(
         if metres == 0.0:
             return None
         if length.min * 1000 <= metres <= length.max * 1000:
-            return arcs, (opposite if must is not None else None)
+            return arcs, ((opposite,) if must is not None else ())
         scale *= target_m / metres
     return None
 
@@ -337,7 +396,7 @@ def _alternatives(engine: Engine, w: np.ndarray, start: int, end: int, count: in
         if found is None:
             break
         arcs = found[0]
-        walks.append((arcs, None))
+        walks.append((arcs, ()))
         edges = np.unique(arcs >> 1)
         w[2 * edges] *= ALTERNATIVE_FACTOR
         w[2 * edges + 1] *= ALTERNATIVE_FACTOR
@@ -351,20 +410,22 @@ def _detours(
     end: int,
     length: LengthKm,
     must: np.ndarray | None,
-    before: int | None = None,
+    lead: list[int] | None = None,
 ) -> list[Walk]:
     """Walks start -> via -> end, one via node per compass sector around the midpoint.
 
-    With `before`, the walks are before -> start -> via -> end and `length` is that
-    of the whole walk; `start` is then the place the walk is reported to pass.
+    With `lead`, the walks are lead[0] -> ... -> lead[-1] -> start -> via -> end:
+    a chain of places lengthened on its last leg only. `length` is then that of
+    the whole walk, and `lead[1:]` and `start` are the places the walk must pass.
     """
     nice = engine.node_niceness(w)
+    places = (*lead[1:], start) if lead else ()
     lead_m = 0.0
-    if before is not None:
-        lead = engine.kernel.route(before, start, w)
-        if lead is None:
+    if lead:
+        legs = route_legs(engine, w, [*lead, start], may_turn_back_at=frozenset(places))
+        if legs is None:
             return []
-        lead_m = _metres(engine, lead[0])
+        lead_m = sum(_metres(engine, leg) for leg in legs)
     cost_from, metres_from, _ = engine.kernel.sssp(start, w, engine.length)
     cost_to, metres_to, _ = engine.kernel.sssp(end, w, engine.length, reverse=True)
     usable = np.isfinite(cost_from) & np.isfinite(cost_to) & (engine.degree >= MIN_VIA_DEGREE)
@@ -394,18 +455,18 @@ def _detours(
                 if len(band) == 0:
                     return None
                 via = _nicest(engine, nice, band, mid_lon, mid_lat)
-            if before is None:
+            if lead:
+                arcs = _walk_via_places(engine, w, [*lead, start, via, end], frozenset(places))
+            else:
                 arcs = route_through(engine, w, [start, via, end])
                 if arcs is not None:
                     keep = frozenset({via}) if must is not None else frozenset()
                     arcs = tidy(arcs, engine.arc_tail, engine.arc_head, engine.length, max_appendix_m, keep)
-            else:
-                arcs = _walk_via_place(engine, w, [before, start, via, end], start)
             if arcs is None:
                 return None
             metres = _metres(engine, arcs)
             if length.min * 1000 <= metres <= length.max * 1000:
-                return arcs, (via if before is None else start)
+                return arcs, (places if lead else (via,) if must is not None else ())
             want *= target_m / metres
         return None
 

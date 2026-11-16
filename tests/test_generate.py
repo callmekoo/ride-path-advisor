@@ -8,7 +8,7 @@ from helpers import with_walked_cut
 from rpa.routing.cost import Prefs
 from rpa.routing.diversity import core_edges, overlap
 from rpa.routing.engine import Engine
-from rpa.routing.generate import APPENDIX_SHARE, MIN_APPENDIX_M, generate
+from rpa.routing.generate import APPENDIX_SHARE, MIN_APPENDIX_M, _passes_in_order, generate
 from rpa.routing.spec import AvoidArea, LengthKm, Point, RouteSpec
 
 
@@ -210,10 +210,10 @@ def test_place_too_far_for_the_wanted_loop_is_still_reached_with_a_note(grid, gr
     candidates = generate(grid_engine, spec)
 
     assert len(candidates) >= 1
+    # 4.5 km out and back by the next street over, so that no road is ridden twice.
+    assert min(c.path.length_m for c in candidates) / 1000 == pytest.approx(10.0, abs=0.1)
     for candidate in candidates:
         assert node(19, 10) in nodes_on(grid_engine, candidate)
-        # 4.5 km out and back by the next street over, so that no road is ridden twice.
-        assert candidate.path.length_m / 1000 == pytest.approx(10.0, abs=0.1)
         assert "Дальнее" in candidate.note and "10 км" in candidate.note
 
 
@@ -336,3 +336,157 @@ def test_p2p_without_length_prefers_the_cheapest_route_over_long_detours(grid):
     assert candidates
     assert candidates[0].features.walk_m > 0
     assert candidates[0].path.length_m == min(c.path.length_m for c in candidates)
+
+
+# --- a chain of places -------------------------------------------------------
+
+
+def first_visits(engine: Engine, candidate, places: list[int]) -> list[int]:
+    """Where along the route each of `places` is first reached (the start counts as 0)."""
+    arcs = candidate.path.arcs
+    order = [int(engine.arc_tail[arcs[0]]), *engine.arc_head[arcs].tolist()]
+    return [order.index(place) for place in places]
+
+
+SYSERT, GORA = (14, 12), (8, 15)
+
+
+def chain_spec(grid, *places, km: float | None = None, shape: str = "loop") -> RouteSpec:
+    via = [named(grid, i, j, label) if label else point(grid, i, j) for i, j, label in places]
+    if shape == "loop":
+        spec = RouteSpec(start=point(grid, 10, 10), shape="loop", via=via)
+    else:
+        spec = RouteSpec(start=point(grid, 2, 10), end=point(grid, 18, 10), shape="p2p", via=via)
+    return spec.model_copy(update={"length_km": LengthKm.around(km) if km else None})
+
+
+def test_passes_in_order_reads_the_start_and_the_order(grid_engine):
+    from helpers import arcs_via
+
+    arcs = arcs_via(grid_engine, node(2, 2), node(6, 2), node(6, 6))
+    assert _passes_in_order(grid_engine, arcs, (node(2, 2), node(6, 2), node(6, 6)))
+    assert _passes_in_order(grid_engine, arcs, (node(4, 2), node(6, 4)))
+    assert not _passes_in_order(grid_engine, arcs, (node(6, 4), node(4, 2)))
+    assert not _passes_in_order(grid_engine, arcs, (node(4, 2), node(9, 9)))
+
+
+def test_point_to_point_passes_two_places_in_the_given_order(grid, grid_engine):
+    spec = chain_spec(grid, (6, 14, "А"), (14, 6, "Б"), shape="p2p")
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert_sound(grid_engine, candidate.path.arcs, node(2, 10), node(18, 10))
+        a, b = first_visits(grid_engine, candidate, [node(6, 14), node(14, 6)])
+        assert a < b
+        assert candidate.via_label == "А → Б"
+
+
+def test_the_reverse_order_gives_another_route(grid, grid_engine):
+    forward = generate(grid_engine, chain_spec(grid, (6, 14, "А"), (14, 6, "Б"), shape="p2p"))
+    backward = generate(grid_engine, chain_spec(grid, (14, 6, "Б"), (6, 14, "А"), shape="p2p"))
+
+    assert backward and backward[0].path.arcs.tolist() != forward[0].path.arcs.tolist()
+    for candidate in backward:
+        b, a = first_visits(grid_engine, candidate, [node(14, 6), node(6, 14)])
+        assert b < a
+        assert candidate.via_label == "Б → А"
+
+
+def test_a_loop_through_two_places_needs_no_length(grid, grid_engine):
+    spec = chain_spec(grid, (*SYSERT, "Сысерть"), (*GORA, "Гора"))
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 2
+    for candidate in candidates:
+        assert_sound(grid_engine, candidate.path.arcs, node(10, 10), node(10, 10))
+        first, second = first_visits(grid_engine, candidate, [node(*SYSERT), node(*GORA)])
+        assert first < second
+        assert candidate.via_label == "Сысерть → Гора" and candidate.note is None
+
+
+def test_only_labelled_places_name_the_route(grid, grid_engine):
+    spec = chain_spec(grid, (*SYSERT, None), (*GORA, "Гора"))
+    assert {c.via_label for c in generate(grid_engine, spec)} == {"Гора"}
+
+
+def test_a_loop_through_two_places_is_lengthened_to_the_wanted_length(grid, grid_engine):
+    # Straight through both places the loop is about 11 km.
+    spec = chain_spec(grid, (*SYSERT, "Сысерть"), (*GORA, "Гора"), km=20)
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 2
+    for candidate in candidates:
+        assert_sound(grid_engine, candidate.path.arcs, node(10, 10), node(10, 10))
+        first, second = first_visits(grid_engine, candidate, [node(*SYSERT), node(*GORA)])
+        assert first < second
+        assert 18.0 <= candidate.path.length_m / 1000 <= 22.0
+        assert candidate.note is None
+
+
+def test_two_places_too_far_for_the_wanted_length_get_a_note(grid, grid_engine):
+    spec = chain_spec(grid, (*SYSERT, "Сысерть"), (*GORA, "Гора"), km=6)
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert candidate.note.startswith("через «Сысерть», «Гора» короче ")
+        assert candidate.note.endswith(" км не получится")
+        first, second = first_visits(grid_engine, candidate, [node(*SYSERT), node(*GORA)])
+        assert first < second
+
+
+def test_unnamed_places_too_far_are_called_these_places(grid, grid_engine):
+    spec = chain_spec(grid, (*SYSERT, None), (*GORA, None), km=6)
+    candidates = generate(grid_engine, spec)
+    assert candidates and candidates[0].note.startswith("через эти места короче ")
+    assert candidates[0].via_label is None
+
+
+def test_a_place_at_the_start_is_dropped_from_the_chain(grid, grid_engine):
+    spec = chain_spec(grid, (2, 10, "Дом"), (10, 16, "Гора"), shape="p2p")
+    candidates = generate(grid_engine, spec)
+    alone = generate(grid_engine, chain_spec(grid, (10, 16, "Гора"), shape="p2p"))
+
+    assert candidates
+    assert [c.path.arcs.tolist() for c in candidates] == [c.path.arcs.tolist() for c in alone]
+    assert candidates[0].via_label == "Дом → Гора"
+
+
+def test_a_loop_may_pass_its_start_between_two_places(grid, grid_engine):
+    # A figure of eight: out to the first place, back through the start, out to the second.
+    spec = chain_spec(grid, (*SYSERT, "Сысерть"), (10, 10, "Дом"), (6, 7, "Лес"))
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        assert_sound(grid_engine, candidate.path.arcs, node(10, 10), node(10, 10))
+        arcs = candidate.path.arcs
+        heads = grid_engine.arc_head[arcs].tolist()
+        at_place = heads.index(node(*SYSERT))
+        home = heads.index(node(10, 10), at_place)
+        assert node(6, 7) in heads[home:]
+
+
+def test_a_far_place_gives_several_routes(grid, grid_engine):
+    spec = chain_spec(grid, (19, 19, "Дальнее"))
+    candidates = generate(grid_engine, spec)
+
+    assert len(candidates) >= 2
+    for candidate in candidates:
+        assert node(19, 19) in nodes_on(grid_engine, candidate)
+
+
+def test_a_place_on_a_dead_end_road_in_a_chain_is_ridden_to_and_back_from(grid):
+    graph, fork = with_peninsula(grid)
+    engine = Engine(graph)
+    lon, lat = graph.node_lonlat[fork].tolist()
+    via = [Point(lon=lon, lat=lat, label="Мыс"), named(grid, *GORA, "Гора")]
+    spec = RouteSpec(start=point(grid, 10, 10), shape="loop", via=via)
+    candidates = generate(engine, spec)
+
+    assert len(candidates) >= 1
+    for candidate in candidates:
+        cape, gora = first_visits(engine, candidate, [fork, node(*GORA)])
+        assert cape < gora
+        assert candidate.via_label == "Мыс → Гора"
