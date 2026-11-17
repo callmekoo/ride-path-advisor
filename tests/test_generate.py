@@ -705,14 +705,16 @@ def corridor_with_hole(grid):
     return without_edges(graph, across)
 
 
-def test_a_far_start_with_one_road_there_gets_the_least_repeating_ride_with_a_note(grid):
+def test_a_far_start_with_one_road_there_still_gets_several_rings_with_a_note(grid):
     engine = Engine(corridor_with_hole(grid))
     spec = around_spec(grid, 0, 10, box=(14, 16, 9, 11))
     candidates = generate(engine, spec)
-    assert len(candidates) == 1
+    # The way there and back is shared by every ride, but the rings differ: they are all offered.
+    assert len(candidates) >= 2
     assert_around(engine, candidates, spec, 0, 10)
-    assert candidates[0].features.repeat_share > 0.3
-    assert candidates[0].note == "подъезд и возврат по одной дороге"
+    for candidate in candidates:
+        assert candidate.features.repeat_share > 0.3
+        assert candidate.note == "подъезд и возврат по одной дороге"
 
 
 # A town over the blocks between the streets i = 7..13, j = 7..13; its streets are all there.
@@ -734,3 +736,4 @@ def test_a_ride_around_a_town_from_inside_it_rides_out_around_and_back(grid, gri
         assert encloses(build_path(grid, core).coords, spec.around)
         if km is not None:
             assert 27.0 <= candidate.path.length_m / 1000 <= 33.0
+

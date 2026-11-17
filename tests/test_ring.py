@@ -220,3 +220,27 @@ def test_a_route_through_the_inner_point_is_judged_by_the_vertices(origin, half)
     assert encloses(lonlat([*around, (-2 * half, y), (x - half / 2, y), (x, y), (x + half / 2, y), (-2 * half, y)], origin), obj)
     beside = [(3 * half, -2 * half), (6 * half, -2 * half), (6 * half, 2 * half), (3 * half, 2 * half)]
     assert not encloses(lonlat(beside, origin), obj)
+
+
+def causeway_lake(origin):
+    """4 km x 1 km: the bottom shore is straight, the top one wiggles over its west half only (many vertices)."""
+    bottom = [(0.0, 0.0), (4000.0, 0.0)]
+    east = [(4000.0, 1000.0)]
+    top = [(2000.0 - 25.0 * i, 1000.0 + (10.0 if i % 2 else -10.0)) for i in range(1, 80)] + [(0.0, 1000.0)]
+    top = [(x, y) for x, y in top if x >= 0] + [(2000.0, 1000.0)]
+    top = sorted(set(top), key=lambda p: -p[0])
+    outline = lonlat(bottom + east + top, origin)
+    return Around(point=Point(lon=origin[0], lat=origin[1]), radius_m=1000, outline=outline)
+
+
+def test_a_ride_cutting_off_a_long_straight_shore_does_not_enclose_it():
+    origin = (60.6, 56.84)
+    obj = causeway_lake(origin)
+    vertices = len(obj.outline)
+    assert vertices > 40
+    # Around the western three quarters only: the east quarter of the shore, 30 % of its length but
+    # just two of its vertices, lies outside the loop, so it is cut across along a causeway.
+    cut = [(-200, -200), (3000, -200), (3000, 1200), (-200, 1200)]
+    assert not encloses(lonlat(cut, origin), obj)
+    full = [(-200, -200), (4200, -200), (4200, 1200), (-200, 1200)]
+    assert encloses(lonlat(full, origin), obj)

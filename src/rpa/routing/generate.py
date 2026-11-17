@@ -31,7 +31,7 @@ from rpa.routing.diversity import select_by_size, select_diverse
 from rpa.routing.engine import Engine
 from rpa.routing.geo import destination
 from rpa.routing.path import RoutePath, build_path
-from rpa.routing.score import Candidate, features, rejection, score
+from rpa.routing.score import MAX_REPEAT_SHARE, Candidate, features, rejection, score
 from rpa.routing.spec import Around, AvoidArea, LengthKm, Point, RouteSpec
 from rpa.routing.trim import tidy
 from rpa.routing.walk import route_legs, route_through
@@ -769,7 +769,13 @@ def _around_candidates(engine: Engine, w: np.ndarray, start: int, spec: RouteSpe
         # From afar, the only road to the object may be the one back from it: offer the ride all the same.
         retraced = [(walk, m) for walk, m in measured if rejection(replace(m, repeat_share=0.0), judged) is None]
         if retraced:
-            passed = [min(retraced, key=lambda pair: pair[1].repeat_share)]
+            # The ring itself may still be sound: keep every ride whose ring repeats no more than usual.
+            rings_ok = [
+                pair
+                for pair in retraced
+                if features(engine, w, pair[0].core, None).repeat_share <= MAX_REPEAT_SHARE
+            ]
+            passed = rings_ok or [min(retraced, key=lambda pair: pair[1].repeat_share)]
             note = SAME_WAY_NOTE if note is None else f"{note}; {SAME_WAY_NOTE}"
     length = spec.length_km if note is None else None
     if length is None and passed:
