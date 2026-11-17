@@ -737,3 +737,20 @@ def test_a_ride_around_a_town_from_inside_it_rides_out_around_and_back(grid, gri
         if km is not None:
             assert 27.0 <= candidate.path.length_m / 1000 <= 33.0
 
+
+
+def test_one_anchor_without_a_road_does_not_discard_a_small_ring(grid, hole_engine, monkeypatch):
+    from rpa.routing import generate as gen
+
+    corner = grid.node_lonlat[node(8, 8)]
+    snap = gen._snap
+
+    def blind_at_the_corner(engine, nice, usable, lon, lat, *rest):
+        # No junction is found for one anchor on the lake's south shore, whatever the phase of the ring.
+        if lat < corner[1] and (0.0075 < lon - corner[0] < 0.0155 or 0.030 < lon - corner[0] < 0.032):
+            return None
+        return snap(engine, nice, usable, lon, lat, *rest)
+
+    monkeypatch.setattr(gen, "_snap", blind_at_the_corner)
+    spec = around_spec(grid, 8, 10)
+    assert_around(hole_engine, generate(hole_engine, spec), spec, 8, 10)

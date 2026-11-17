@@ -73,7 +73,7 @@ SIZE_BEARING_SHIFT_DEG = 10.0
 LOOP_SIZE_TOLERANCE = 0.15
 # A ride around an object: anchor points about this far apart along a ring around it, within these counts.
 AROUND_SPACING_M = 4000.0
-MIN_ANCHORS, MAX_ANCHORS = 4, 8
+MIN_ANCHORS, MAX_ANCHORS = 5, 8
 # The ring is tried at these shares of the object's equivalent radius from its border, at least
 # MIN_AROUND_OFFSET_M from it and from each other.
 AROUND_OFFSETS = (0.05, 0.25, 0.6)
@@ -595,7 +595,8 @@ def _around(engine: Engine, w: np.ndarray, start: int, spec: RouteSpec) -> tuple
 
     ceiling_m = _around_ceiling_m(spec.around)
     first_m = shortest.offset_m + (length.target * 1000 - tight_m) / (2 * math.pi * DETOUR)
-    attempts = [(shift, phase, ccw) for shift in RING_SHIFTS for phase in (0.0, 0.5) for ccw in (True, False)]
+    # Both directions of a ring follow nearly the same roads on a two-way graph: one is enough here.
+    attempts = [(shift, phase, True) for shift in RING_SHIFTS for phase in (0.0, 0.5)]
 
     def fit_attempt(shape: tuple[tuple[int, int], float, bool]) -> tuple[_RingWalk | None, _RingWalk | None]:
         return _fit_ring(engine, w, ring, length, first_m, ceiling_m, *shape)
