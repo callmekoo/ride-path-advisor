@@ -73,7 +73,7 @@ SIZE_BEARING_SHIFT_DEG = 10.0
 LOOP_SIZE_TOLERANCE = 0.15
 # A ride around an object: anchor points about this far apart along a ring around it, within these counts.
 AROUND_SPACING_M = 4000.0
-MIN_ANCHORS, MAX_ANCHORS = 5, 8
+MIN_ANCHORS, MAX_ANCHORS = 4, 8
 # The ring is tried at these shares of the object's equivalent radius from its border, at least
 # MIN_AROUND_OFFSET_M from it and from each other.
 AROUND_OFFSETS = (0.05, 0.25, 0.6)
@@ -711,7 +711,9 @@ def _ring_walk(
         if node is not None:
             slots.append((slot, node))
     taken = [slot for slot, _ in slots]
-    if len(taken) < MIN_RING_ANCHORS or max(np.diff([*taken, taken[0] + n])) > MAX_RING_GAP * n + 1e-9:
+    # One anchor without a road nearby is no reason to give the ring up: whether the ride goes around is checked later.
+    widest_gap = max(np.diff([*taken, taken[0] + n]))
+    if len(taken) < MIN_RING_ANCHORS or widest_gap > max(2, MAX_RING_GAP * n + 1e-9):
         return None
 
     nodes = [node for _, node in (slots if ccw else slots[::-1])]
