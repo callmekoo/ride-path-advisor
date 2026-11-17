@@ -159,6 +159,7 @@ describe("pointRoles", () => {
     ["start named, one point", 1, said({ start: "Ревда" }), ["finish"]],
     ["end named", 3, said({ end: "Ревда" }), ["start", 1, 2]],
     ["loop has no finish", 3, said({ shape: "loop" }), ["start", 1, 2]],
+    ["a ride around an object has no finish", 3, said({ around: "Верх-Исетский пруд" }), ["start", 1, 2]],
     ["loop with a named start", 3, said({ shape: "loop", start: "Ревда" }), [1, 2, 3]],
     ["the clicked label names nothing", 3, said({ start: "точка на карте", end: " Точка на карте " }), ["start", 1, "finish"]],
   ];

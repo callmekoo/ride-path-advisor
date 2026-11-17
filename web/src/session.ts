@@ -149,7 +149,7 @@ const names = (place: string | null) => !!place && place.trim().toLowerCase() !=
 /** Roles of the clicked points; mirrors `assign_points` on the server (src/rpa/nlu/resolve.py). */
 export function pointRoles(count: number, understood: ParsedRequest | null): Role[] {
   const startNamed = names(understood?.start ?? null);
-  const finishNamed = names(understood?.end ?? null) || understood?.shape === "loop";
+  const finishNamed = names(understood?.end ?? null) || understood?.shape === "loop" || understood?.around != null;
   let via = 0;
   return Array.from({ length: count }, (_, index): Role => {
     if (index === 0 && !startNamed) return "start";
