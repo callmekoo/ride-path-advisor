@@ -7,7 +7,7 @@ from rpa.nlu.client import LlmError
 from rpa.nlu.prompt import ParsedRequest, messages
 from rpa.osm.gazetteer import same_name
 
-_PLACE_FIELDS = {"start", "end", "via", "toward"}
+_PLACE_FIELDS = {"start", "end", "via", "toward", "around"}
 PASS_SHARE = 0.9
 
 

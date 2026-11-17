@@ -52,3 +52,11 @@ def test_cases_run_through_the_model_and_failures_are_reported():
 
     assert first.problems == [] and len(second.problems) == 1 and third.problems == ["Модель недоступна"]
     assert "Сохранённые места: дом, дача" in llm.asked[0] and "Новая реплика: короче" in llm.asked[1]
+
+
+def test_the_object_to_ride_around_is_compared_as_a_name():
+    # The model may add or drop the kind word and keep the ending: it is still the same object.
+    assert mismatches(ParsedRequest(around="озеро Шарташ"), {"around": "Шарташ"}) == []
+    assert mismatches(ParsedRequest(around="Шарташа"), {"around": "Шарташ"}) == []
+    assert mismatches(ParsedRequest(around="Ревда"), {"around": "Шарташ"}) != []
+    assert mismatches(ParsedRequest(around=None), {"around": "Шарташ"}) != []
