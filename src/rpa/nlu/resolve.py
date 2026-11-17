@@ -185,13 +185,14 @@ def _around_name(parsed: ParsedRequest, context: Context) -> str | None:
 
 def _around_object(name: str, context: Context, near: tuple[float, float]) -> _Found:
     found = _find(name, context, near)
-    if found.kind == "river":
-        raise _Ask(Question(text="Объехать реку кругом не получится. Назовите озеро, парк или населённый пункт.", about=name))
     if name in context.picks and context.gazetteer is not None:
-        # An answer to a question is only a point; its size and outline are in the gazetteer.
+        # An answer to a question is only a point; its kind, size and outline are in the gazetteer.
         for hit in context.gazetteer.search(name, near=near, limit=3 * MAX_OPTIONS):
             if (hit.place.lon, hit.place.lat) == (found.point.lon, found.point.lat):
-                return _Found(found.point, hit.place.kind, hit.place.radius_m, hit.place.outline)
+                found = _Found(found.point, hit.place.kind, hit.place.radius_m, hit.place.outline)
+                break
+    if found.kind == "river":
+        raise _Ask(Question(text="Объехать реку кругом не получится. Назовите озеро, парк или населённый пункт.", about=name))
     return found
 
 
@@ -271,8 +272,10 @@ def _around_spec(
 ) -> Resolved:
     """A loop around an object. It is exclusive with places to pass and a direction, so those are said to be ignored."""
     label = around.point.label
-    if parsed.end:
+    if _is_named(parsed.end):
         warnings.append(f"Финиш «{parsed.end}» не учитывается: маршрут вокруг объекта — кольцо.")
+    elif parsed.end:
+        warnings.append("Точка финиша на карте не учитывается: маршрут вокруг объекта — кольцо.")
     if parsed.via or clicked_via or parsed.via_water:
         warnings.append(f"Промежуточные места не учитываются: маршрут идёт вокруг объекта «{label}».")
     if parsed.direction is not None or parsed.toward:

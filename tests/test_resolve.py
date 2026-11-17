@@ -464,6 +464,12 @@ def test_a_finish_is_ignored_with_a_warning(context):
     assert len(resolved.warnings) == 1 and "Ревда" in resolved.warnings[0]
 
 
+def test_a_clicked_finish_is_ignored_with_a_warning_that_does_not_quote_it(context):
+    resolved = resolve(ParsedRequest(shape="p2p", end="точка на карте", around="озеро Большое"), context)
+
+    assert resolved.warnings == ["Точка финиша на карте не учитывается: маршрут вокруг объекта — кольцо."]
+
+
 def test_a_second_click_is_not_a_finish_for_a_ride_around_an_object(context, grid):
     first, second = (Point(lon=lon, lat=lat) for lon, lat in (at(grid, 10, 10), at(grid, 12, 12)))
     context.points = [first, second]
@@ -511,6 +517,14 @@ def test_around_a_river_is_refused_with_an_explanation(context):
 
     assert resolved.spec is None
     assert resolved.question.about == "река Исеть" and "реку" in resolved.question.text and resolved.question.options == []
+
+
+def test_around_a_river_picked_from_options_is_refused_too(context, grid):
+    context.picks = {"Исеть": Point(lon=at(grid, 14, 4)[0], lat=at(grid, 14, 4)[1], label="река Исеть")}
+
+    resolved = resolve(ParsedRequest(around="Исеть"), context)
+
+    assert resolved.spec is None and resolved.question.about == "Исеть" and "реку" in resolved.question.text
 
 
 def test_around_a_namesake_asks_which_one(context):

@@ -186,7 +186,7 @@ def around(grid, i0: int, i1: int, label: str | None) -> dict:
 
 
 @pytest.mark.parametrize(("label", "named"), [("Тестовое (озеро)", "«Тестовое (озеро)»"), (None, "этот объект")])
-def test_an_object_with_no_road_on_one_side_explains_itself(grid, tmp_path, label, named):
+def test_an_object_without_a_ring_of_roads_explains_itself(grid, tmp_path, label, named):
     # The object reaches past the eastern edge of the map.
     engine = Engine(grid_with_hole(grid, 15, 22, 6, 14))
     client = TestClient(create_app(engine, tmp_path / "rpa.sqlite"))
@@ -194,7 +194,7 @@ def test_an_object_with_no_road_on_one_side_explains_itself(grid, tmp_path, labe
     body = client.post("/api/route", json=spec).json()
 
     assert body["candidates"] == []
-    assert body["message"] == f"Объехать {named} не получается: с одной стороны нет дороги."
+    assert body["message"] == f"Объехать {named} не получается: вокруг не нашлось замкнутого кольца дорог."
 
 
 def test_a_ride_around_an_object_is_titled_by_it(grid, tmp_path):
